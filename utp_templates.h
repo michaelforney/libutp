@@ -57,10 +57,6 @@
 	#pragma pack(pop)
 #endif
 
-typedef int SortCompareProc(const void *, const void *);
-
-template<typename T> static FORCEINLINE void QuickSortT(T *base, size_t num, int (*comp)(const T *, const T *)) { qsort(base, num, sizeof(T), (SortCompareProc*)comp); }
-
 
 // WARNING: The template parameter MUST be a POD type!
 template <typename T, size_t minsize = 16> class Array {
@@ -137,20 +133,6 @@ public:
 
 	bool inline HasElement(const T &v) const {
 		return LookupElement(v) != -1;
-	}
-
-	typedef int SortCompareProc(const T *a, const T *b);
-
-	void Sort(SortCompareProc* proc, size_t start, size_t end) {
-		QuickSortT(&mem[start], end - start, proc);
-	}
-
-	void Sort(SortCompareProc* proc, size_t start) {
-		Sort(proc, start, count);
-	}
-
-	void Sort(SortCompareProc* proc) {
-		Sort(proc, 0, count);
 	}
 };
 
