@@ -674,16 +674,16 @@ void removeSocketFromAckList(UTPSocket *conn)
 {
 	if (conn->ida >= 0)
 	{
-		UTPSocket *last = conn->ctx->ack_sockets[conn->ctx->ack_sockets.GetCount() - 1];
+		UTPSocket *last = conn->ctx->ack_sockets[conn->ctx->ack_sockets_count - 1];
 
-		assert(last->ida < (int)(conn->ctx->ack_sockets.GetCount()));
+		assert(last->ida < (int)(conn->ctx->ack_sockets_count));
 		assert(conn->ctx->ack_sockets[last->ida] == last);
 		last->ida = conn->ida;
 		conn->ctx->ack_sockets[conn->ida] = last;
 		conn->ida = -1;
 
 		// Decrease the count
-		conn->ctx->ack_sockets.SetCount(conn->ctx->ack_sockets.GetCount() - 1);
+		conn->ctx->ack_sockets_count--;
 	}
 }
 
@@ -718,7 +718,12 @@ void UTPSocket::schedule_ack()
 		#if UTP_DEBUG_LOGGING
 		log(UTP_LOG_DEBUG, "schedule_ack");
 		#endif
-		ida = ctx->ack_sockets.Append(this);
+		if (ctx->ack_sockets_count >= ctx->ack_sockets_alloc) {
+			ctx->ack_sockets_alloc = MAX(16, ctx->ack_sockets_alloc * 2);
+			ctx->ack_sockets = (UTPSocket**)realloc(ctx->ack_sockets, ctx->ack_sockets_alloc * sizeof(ctx->ack_sockets[0]));
+		}
+		ida = ctx->ack_sockets_count++;
+		ctx->ack_sockets[ida] = this;
 	} else {
 		#if UTP_DEBUG_LOGGING
 		log(UTP_LOG_DEBUG, "schedule_ack: already in list");
@@ -2917,7 +2922,7 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 	if (flags != ST_SYN) {
 		ctx->current_ms = utp_call_get_milliseconds(ctx, NULL);
 
-		for (size_t i = 0; i < ctx->rst_info.GetCount(); i++) {
+		for (size_t i = 0; i < ctx->rst_info_count; i++) {
 			if ((ctx->rst_info[i].connid == id)   &&
 				(ctx->rst_info[i].addr   == addr) &&
 				(ctx->rst_info[i].ack_nr == seq_nr))
@@ -2932,24 +2937,28 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 			}
 		}
 
-		if (ctx->rst_info.GetCount() > RST_INFO_LIMIT) {
+		if (ctx->rst_info_count > RST_INFO_LIMIT) {
 
 			#if UTP_DEBUG_LOGGING
-			ctx->log(UTP_LOG_DEBUG, NULL, "recv not sending RST to non-SYN (limit at %u stored)", (uint)ctx->rst_info.GetCount());
+			ctx->log(UTP_LOG_DEBUG, NULL, "recv not sending RST to non-SYN (limit at %u stored)", (uint)ctx->rst_info_count);
 			#endif
 
 			return 1;
 		}
 
 		#if UTP_DEBUG_LOGGING
-		ctx->log(UTP_LOG_DEBUG, NULL, "recv send RST to non-SYN (%u stored)", (uint)ctx->rst_info.GetCount());
+		ctx->log(UTP_LOG_DEBUG, NULL, "recv send RST to non-SYN (%u stored)", (uint)ctx->rst_info_count);
 		#endif
 
-		RST_Info &r = ctx->rst_info.Append();
-		r.addr = addr;
-		r.connid = id;
-		r.ack_nr = seq_nr;
-		r.timestamp = ctx->current_ms;
+		if (ctx->rst_info_count >= ctx->rst_info_alloc) {
+			ctx->rst_info_alloc = MAX(16, ctx->rst_info_alloc * 2);
+			ctx->rst_info = (RST_Info *)realloc(ctx->rst_info, ctx->rst_info_alloc * sizeof(ctx->rst_info[0]));
+		}
+		RST_Info *r = &ctx->rst_info[ctx->rst_info_count++];
+		r->addr = addr;
+		r->connid = id;
+		r->ack_nr = seq_nr;
+		r->timestamp = ctx->current_ms;
 
 		UTPSocket::send_rst(ctx, addr, id, seq_nr, utp_call_get_random(ctx, NULL));
 		return 1;
@@ -2974,7 +2983,7 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 		if (ctx->utp_sockets->GetCount() > 3000) {
 
 			#if UTP_DEBUG_LOGGING
-			ctx->log(UTP_LOG_DEBUG, NULL, "rejected incoming connection, too many uTP sockets %d", ctx->utp_sockets->GetCount());
+			ctx->log(UTP_LOG_DEBUG, NULL, "rejected incoming connection, too many uTP sockets %d", ctx->utp_sockets->count);
 			#endif
 
 			return 1;
@@ -3273,7 +3282,7 @@ void utp_issue_deferred_acks(utp_context *ctx)
 	assert(ctx);
 	if (!ctx) return;
 
-	for (size_t i = 0; i < ctx->ack_sockets.GetCount(); i++) {
+	for (size_t i = 0; i < ctx->ack_sockets_count; i++) {
 		UTPSocket *conn = ctx->ack_sockets[i];
 		conn->send_ack();
 		i--;
@@ -3293,14 +3302,16 @@ void utp_check_timeouts(utp_context *ctx)
 
 	ctx->last_check = ctx->current_ms;
 
-	for (size_t i = 0; i < ctx->rst_info.GetCount(); i++) {
+	for (size_t i = 0; i < ctx->rst_info_count; i++) {
 		if ((int)(ctx->current_ms - ctx->rst_info[i].timestamp) >= RST_INFO_TIMEOUT) {
-			ctx->rst_info.MoveUpLast(i);
+			if (i != --ctx->rst_info_count)
+				ctx->rst_info[i] = ctx->rst_info[ctx->rst_info_count];
 			i--;
 		}
 	}
-	if (ctx->rst_info.GetCount() != ctx->rst_info.GetAlloc()) {
-		ctx->rst_info.Compact();
+	if (ctx->rst_info_count != ctx->rst_info_alloc) {
+		ctx->rst_info_alloc = ctx->rst_info_count;
+		ctx->rst_info = (RST_Info*)realloc(ctx->rst_info, ctx->rst_info_alloc * sizeof(ctx->rst_info[0]));
 	}
 
 	utp_hash_iterator_t it;

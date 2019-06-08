@@ -118,8 +118,12 @@ struct struct_utp_context {
 	uint64 current_ms;
 	utp_context_stats context_stats;
 	UTPSocket *last_utp_socket;
-	Array<UTPSocket*> ack_sockets;
-	Array<RST_Info> rst_info;
+	UTPSocket **ack_sockets;
+	size_t ack_sockets_count;
+	size_t ack_sockets_alloc;
+	RST_Info *rst_info;
+	size_t rst_info_count;
+	size_t rst_info_alloc;
 	UTPSocketHT *utp_sockets;
 	size_t target_delay;
 	size_t opt_sndbuf;
