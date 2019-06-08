@@ -109,38 +109,4 @@ void *utp_hash_del(utp_hash_t *hash, const void *key);
 void *utp_hash_iterate(utp_hash_t *hash, utp_hash_iterator_t *iter);
 void utp_hash_free_mem(utp_hash_t *hash);
 
-/*
-	This HashTable requires that T have at least sizeof(K)+sizeof(utp_link_t) bytes.
-	Usually done like this:
-
-	struct K {
-		int whatever;
-	};
-
-	struct T {
-		K wtf;
-		utp_link_t link; // also wtf
-	};
-*/
-
-template<typename K, typename T> class utpHashTable {
-	utp_hash_t *hash;
-public:
-	static uint compare(const void *k1, const void *k2, size_t ks) {
-		return *((K*)k1) == *((K*)k2);
-	}
-	static uint32 compute_hash(const void *k, size_t ks) {
-		return ((K*)k)->compute_hash();
-	}
-	void Init() { hash = NULL; }
-	bool Allocated() { return (hash != NULL); }
-	void Free() { utp_hash_free_mem(hash); hash = NULL; }
-	void Create(int N, int initial) { hash = utp_hash_create(N, sizeof(K), sizeof(T), initial, &compute_hash, &compare); }
-	T *Lookup(const K &key) { return (T*)utp_hash_lookup(hash, &key); }
-	T *Add(const K &key) { return (T*)utp_hash_add(&hash, &key); }
-	T *Delete(const K &key) { return (T*)utp_hash_del(hash, &key); }
-	T *Iterate(utp_hash_iterator_t &iterator) { return (T*)utp_hash_iterate(hash, &iterator); }
-	size_t GetCount() { return hash->count; }
-};
-
 #endif //__UTP_HASH_H__

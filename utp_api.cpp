@@ -72,7 +72,7 @@ struct_utp_context::struct_utp_context()
 	memset(&context_stats, 0, sizeof(context_stats));
 	memset(callbacks, 0, sizeof(callbacks));
 	target_delay = CCONTROL_TARGET;
-	utp_sockets = new UTPSocketHT;
+	utp_sockets = utp_hash_create(UTP_SOCKET_BUCKETS, sizeof(UTPSocketKey), sizeof(UTPSocketKeyData), UTP_SOCKET_INIT, utp_socket_hash, utp_socket_comp);
 
 	callbacks[UTP_GET_UDP_MTU]      = &utp_default_get_udp_mtu;
 	callbacks[UTP_GET_UDP_OVERHEAD] = &utp_default_get_udp_overhead;
@@ -93,7 +93,8 @@ struct_utp_context::struct_utp_context()
 }
 
 struct_utp_context::~struct_utp_context() {
-	delete this->utp_sockets;
+	UTP_FreeAll(utp_sockets);
+	utp_hash_free_mem(utp_sockets);
 }
 
 utp_context* utp_init (int version)

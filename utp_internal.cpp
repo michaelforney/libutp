@@ -2506,7 +2506,7 @@ UTPSocket::~UTPSocket()
 	}
 
 	// Remove object from the global hash table
-	UTPSocketKeyData* kd = ctx->utp_sockets->Delete(UTPSocketKey(addr, conn_id_recv));
+	UTPSocketKeyData* kd = utp_hash_del(ctx->utp_sockets, &(UTPSocketKey){addr, conn_id_recv});
 	assert(kd);
 
 	// remove the socket from ack_sockets if it was there also
@@ -2524,10 +2524,10 @@ UTPSocket::~UTPSocket()
 	free(outbuf.elements);
 }
 
-void UTP_FreeAll(struct UTPSocketHT *utp_sockets) {
+void UTP_FreeAll(utp_hash_t *utp_sockets) {
 	utp_hash_iterator_t it;
 	UTPSocketKeyData* keyData;
-	while ((keyData = utp_sockets->Iterate(it))) {
+	while ((keyData = utp_hash_iterate(utp_sockets, &it))) {
 		delete keyData->socket;
 	}
 }
@@ -2547,7 +2547,7 @@ void utp_initialize_socket(	utp_socket *conn,
 			conn_seed = utp_call_get_random(conn->ctx, conn);
 			// we identify v1 and higher by setting the first two bytes to 0x0001
 			conn_seed &= 0xffff;
-		} while (conn->ctx->utp_sockets->Lookup(UTPSocketKey(psaddr, conn_seed)));
+		} while (utp_hash_lookup(conn->ctx->utp_sockets, &(UTPSocketKey){psaddr, conn_seed}));
 
 		conn_id_recv += conn_seed;
 		conn_id_send += conn_seed;
@@ -2573,7 +2573,8 @@ void utp_initialize_socket(	utp_socket *conn,
 	conn->mtu_reset();
 	conn->mtu_last = conn->mtu_ceiling;
 
-	conn->ctx->utp_sockets->Add(UTPSocketKey(conn->addr, conn->conn_id_recv))->socket = conn;
+	UTPSocketKeyData* keyData = utp_hash_add(&conn->ctx->utp_sockets, &(UTPSocketKey){conn->addr, conn->conn_id_recv});
+	keyData->socket = conn;
 
 	// we need to fit one packet in the window when we start the connection
 	conn->max_window = conn->get_packet_size();
@@ -2700,6 +2701,19 @@ int utp_context_get_option(utp_context *ctx, int opt)
 	return -1;
 }
 
+
+uint utp_socket_comp(const void *key_a, const void *key_b, size_t keysize)
+{
+	const UTPSocketKey *a = key_a;
+	const UTPSocketKey *b = key_b;
+	return a->recv_id == b->recv_id && a->addr._port == b->addr._port && memcmp(&a->addr._sin6, &b->addr._sin6, sizeof(a->addr._sin6)) == 0;
+}
+
+uint32 utp_socket_hash(const void *keyp, size_t keysize)
+{
+	const UTPSocketKey *key = keyp;
+	return key->recv_id ^ key->addr._port ^ utp_hash_mem(&key->addr._in, sizeof(&key->addr._in));
+}
 
 int utp_setsockopt(UTPSocket* conn, int opt, int val)
 {
@@ -2866,9 +2880,9 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 		// we have to check every case
 
 		UTPSocketKeyData* keyData;
-		if ( (keyData = ctx->utp_sockets->Lookup(UTPSocketKey(addr, id))) ||
-			((keyData = ctx->utp_sockets->Lookup(UTPSocketKey(addr, id + 1))) && keyData->socket->conn_id_send == id) ||
-			((keyData = ctx->utp_sockets->Lookup(UTPSocketKey(addr, id - 1))) && keyData->socket->conn_id_send == id))
+		if ( (keyData = utp_hash_lookup(ctx->utp_sockets, &(UTPSocketKey){addr, id})) ||
+			((keyData = utp_hash_lookup(ctx->utp_sockets, &(UTPSocketKey){addr, id + 1})) && keyData->socket->conn_id_send == id) ||
+			((keyData = utp_hash_lookup(ctx->utp_sockets, &(UTPSocketKey){addr, id - 1})) && keyData->socket->conn_id_send == id))
 		{
 			UTPSocket* conn = keyData->socket;
 
@@ -2898,7 +2912,7 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 		if (ctx->last_utp_socket && ctx->last_utp_socket->addr == addr && ctx->last_utp_socket->conn_id_recv == id) {
 			conn = ctx->last_utp_socket;
 		} else {
-			UTPSocketKeyData* keyData = ctx->utp_sockets->Lookup(UTPSocketKey(addr, id));
+			UTPSocketKeyData* keyData = utp_hash_lookup(ctx->utp_sockets, &(UTPSocketKey){addr, id});
 			if (keyData) {
 				conn = keyData->socket;
 				ctx->last_utp_socket = conn;
@@ -2970,7 +2984,7 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 		ctx->log(UTP_LOG_DEBUG, NULL, "Incoming connection from %s", addrfmt(addr, addrbuf));
 		#endif
 
-		UTPSocketKeyData* keyData = ctx->utp_sockets->Lookup(UTPSocketKey(addr, id + 1));
+		UTPSocketKeyData* keyData = utp_hash_lookup(ctx->utp_sockets, &(UTPSocketKey){addr, id + 1});
 		if (keyData) {
 
 			#if UTP_DEBUG_LOGGING
@@ -2980,7 +2994,7 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 			return 1;
 		}
 
-		if (ctx->utp_sockets->GetCount() > 3000) {
+		if (ctx->utp_sockets->count > 3000) {
 
 			#if UTP_DEBUG_LOGGING
 			ctx->log(UTP_LOG_DEBUG, NULL, "rejected incoming connection, too many uTP sockets %d", ctx->utp_sockets->count);
@@ -3069,9 +3083,9 @@ static UTPSocket* parse_icmp_payload(utp_context *ctx, const byte *buffer, size_
 
 	UTPSocketKeyData* keyData;
 
-	if ( (keyData = ctx->utp_sockets->Lookup(UTPSocketKey(addr, id))) ||
-		((keyData = ctx->utp_sockets->Lookup(UTPSocketKey(addr, id + 1))) && keyData->socket->conn_id_send == id) ||
-		((keyData = ctx->utp_sockets->Lookup(UTPSocketKey(addr, id - 1))) && keyData->socket->conn_id_send == id))
+	if ( (keyData = utp_hash_lookup(ctx->utp_sockets, &(UTPSocketKey){addr, id})) ||
+		((keyData = utp_hash_lookup(ctx->utp_sockets, &(UTPSocketKey){addr, id + 1})) && keyData->socket->conn_id_send == id) ||
+		((keyData = utp_hash_lookup(ctx->utp_sockets, &(UTPSocketKey){addr, id - 1})) && keyData->socket->conn_id_send == id))
 	{
 		return keyData->socket;
 	}
@@ -3316,7 +3330,7 @@ void utp_check_timeouts(utp_context *ctx)
 
 	utp_hash_iterator_t it;
 	UTPSocketKeyData* keyData;
-	while ((keyData = ctx->utp_sockets->Iterate(it))) {
+	while ((keyData = utp_hash_iterate(ctx->utp_sockets, &it))) {
 		UTPSocket *conn = keyData->socket;
 		conn->check_timeouts();
 

@@ -65,30 +65,16 @@ struct PACKED_ATTRIBUTE RST_Info {
 	uint64 timestamp;
 };
 
-// It's really important that we don't have duplicate keys in the hash table.
-// If we do, we'll eventually crash. if we try to remove the second instance
-// of the key, we'll accidentally remove the first instead. then later,
-// checkTimeouts will try to access the second one's already freed memory.
-void UTP_FreeAll(struct UTPSocketHT *utp_sockets);
+typedef struct UTPSocket UTPSocket;
 
+typedef struct UTPSocketKey UTPSocketKey;
 struct UTPSocketKey {
 	PackedSockAddr addr;
 	uint32 recv_id;		 // "conn_seed", "conn_id"
-
-	UTPSocketKey(const PackedSockAddr& _addr, uint32 _recv_id) {
-		memset(this, 0, sizeof(*this));
-		addr = _addr;
-		recv_id = _recv_id;
-	}
-
-	bool operator == (const UTPSocketKey &other) const {
-		return recv_id == other.recv_id && addr == other.addr;
-	}
-
-	uint32 compute_hash() const {
-		return recv_id ^ addr.compute_hash();
-	}
 };
+
+uint utp_socket_comp(const void *key_a, const void *key_b, size_t keysize);
+uint32 utp_socket_hash(const void *keyp, size_t keysize);
 
 struct UTPSocketKeyData {
 	UTPSocketKey key;
@@ -99,17 +85,11 @@ struct UTPSocketKeyData {
 #define UTP_SOCKET_BUCKETS 79
 #define UTP_SOCKET_INIT    15
 
-struct UTPSocketHT : utpHashTable<UTPSocketKey, UTPSocketKeyData> {
-	UTPSocketHT() {
-		const int buckets = UTP_SOCKET_BUCKETS;
-		const int initial = UTP_SOCKET_INIT;
-		this->Create(buckets, initial);
-	}
-	~UTPSocketHT() {
-		UTP_FreeAll(this);
-		this->Free();
-	}
-};
+// It's really important that we don't have duplicate keys in the hash table.
+// If we do, we'll eventually crash. if we try to remove the second instance
+// of the key, we'll accidentally remove the first instead. then later,
+// checkTimeouts will try to access the second one's already freed memory.
+void UTP_FreeAll(utp_hash_t *utp_sockets);
 
 struct struct_utp_context {
 	void *userdata;
@@ -124,7 +104,7 @@ struct struct_utp_context {
 	RST_Info *rst_info;
 	size_t rst_info_count;
 	size_t rst_info_alloc;
-	UTPSocketHT *utp_sockets;
+	utp_hash_t *utp_sockets;
 	size_t target_delay;
 	size_t opt_sndbuf;
 	size_t opt_rcvbuf;
