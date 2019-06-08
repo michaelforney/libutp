@@ -50,12 +50,6 @@ template <typename T> static inline T max(T a, T b) { if (a > b) return a; retur
 
 template <typename T> static inline T min(T a, T b, T c) { return min(min(a,b),c); }
 template <typename T> static inline T max(T a, T b, T c) { return max(max(a,b),c); }
-template <typename T> static inline T clamp(T v, T mi, T ma)
-{
-	if (v > ma) v = ma;
-	if (v < mi) v = mi;
-	return v;
-}
 
 #if (defined(__SVR4) && defined(__sun))
 	#pragma pack(1)

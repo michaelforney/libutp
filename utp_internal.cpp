@@ -1707,7 +1707,10 @@ void UTPSocket::apply_ccontrol(size_t bytes_acked, uint32 actual_delay, int64 mi
 
 	// make sure that the congestion window is below max
 	// make sure that we don't shrink our window too small
-	max_window = clamp<size_t>(max_window, MIN_WINDOW_SIZE, opt_sndbuf);
+	if (max_window > opt_sndbuf)
+		max_window = opt_sndbuf;
+	if (max_window < MIN_WINDOW_SIZE)
+		max_window = MIN_WINDOW_SIZE;
 
 	// used in parse_log.py
 	log(UTP_LOG_NORMAL, "actual_delay:%u our_delay:%d their_delay:%u off_target:%d max_window:%u "
