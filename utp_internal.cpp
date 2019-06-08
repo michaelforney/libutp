@@ -87,7 +87,7 @@
 //   6: Port (including colon)
 //   1: Terminating null byte
 char addrbuf[65];
-#define addrfmt(x, s) x.fmt(s, sizeof(s))
+#define addrfmt(x, s) PackedSockAddr_fmt(&x, s, sizeof(s))
 
 
 #if (defined(__SVR4) && defined(__sun))
@@ -626,14 +626,14 @@ struct UTPSocket {
 	size_t get_udp_mtu()
 	{
 		socklen_t len;
-		SOCKADDR_STORAGE sa = addr.get_sockaddr_storage(&len);
+		SOCKADDR_STORAGE sa = PackedSockAddr_get_sockaddr_storage(&addr, &len);
 		return utp_call_get_udp_mtu(this->ctx, this, (const struct sockaddr *)&sa, len);
 	}
 
 	size_t get_udp_overhead()
 	{
 		socklen_t len;
-		SOCKADDR_STORAGE sa = addr.get_sockaddr_storage(&len);
+		SOCKADDR_STORAGE sa = PackedSockAddr_get_sockaddr_storage(&addr, &len);
 		return utp_call_get_udp_overhead(this->ctx, this, (const struct sockaddr *)&sa, len);
 	}
 
@@ -707,7 +707,7 @@ static void utp_register_sent_packet(utp_context *ctx, size_t length)
 void send_to_addr(utp_context *ctx, const byte *p, size_t len, const PackedSockAddr &addr, int flags = 0)
 {
 	socklen_t tolen;
-	SOCKADDR_STORAGE to = addr.get_sockaddr_storage(&tolen);
+	SOCKADDR_STORAGE to = PackedSockAddr_get_sockaddr_storage(&addr, &tolen);
 	utp_register_sent_packet(ctx, len);
 	utp_call_sendto(ctx, NULL, p, len, (const struct sockaddr *)&to, tolen, flags);
 }
@@ -2540,7 +2540,8 @@ void utp_initialize_socket(	utp_socket *conn,
 							uint32 conn_id_recv,
 							uint32 conn_id_send)
 {
-	PackedSockAddr psaddr = PackedSockAddr((const SOCKADDR_STORAGE*)addr, addrlen);
+	PackedSockAddr psaddr;
+	PackedSockAddr_set(&psaddr, (const SOCKADDR_STORAGE*)addr, addrlen);
 
 	if (need_seed_gen) {
 		do {
@@ -2590,6 +2591,11 @@ utp_socket*	utp_create_socket(utp_context *ctx)
 	if (!ctx) return NULL;
 
 	UTPSocket *conn = new UTPSocket; // TODO: UTPSocket should have a constructor
+
+	SOCKADDR_STORAGE sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.ss_family = AF_INET;
+	PackedSockAddr_set(&conn->addr, &sa, sizeof(sa));
 
 	conn->state					= CS_UNINITIALIZED;
 	conn->ctx					= ctx;
@@ -2845,7 +2851,8 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 	assert(to);
 	if (!to) return 0;
 
-	const PackedSockAddr addr((const SOCKADDR_STORAGE*)to, tolen);
+	PackedSockAddr addr;
+	PackedSockAddr_set(&addr, (const SOCKADDR_STORAGE*)to, tolen);
 
 	if (len < sizeof(PacketFormatV1)) {
 		#if UTP_DEBUG_LOGGING
@@ -2909,7 +2916,7 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 	else if (flags != ST_SYN) {
 		UTPSocket* conn = NULL;
 
-		if (ctx->last_utp_socket && ctx->last_utp_socket->addr == addr && ctx->last_utp_socket->conn_id_recv == id) {
+		if (ctx->last_utp_socket && PackedSockAddr_equal(&ctx->last_utp_socket->addr, &addr) && ctx->last_utp_socket->conn_id_recv == id) {
 			conn = ctx->last_utp_socket;
 		} else {
 			UTPSocketKeyData* keyData = utp_hash_lookup(ctx->utp_sockets, &(UTPSocketKey){addr, id});
@@ -2938,7 +2945,7 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 
 		for (size_t i = 0; i < ctx->rst_info_count; i++) {
 			if ((ctx->rst_info[i].connid == id)   &&
-				(ctx->rst_info[i].addr   == addr) &&
+				PackedSockAddr_equal(&ctx->rst_info[i].addr, &addr) &&
 				(ctx->rst_info[i].ack_nr == seq_nr))
 			{
 				ctx->rst_info[i].timestamp = ctx->current_ms;
@@ -3057,7 +3064,8 @@ static UTPSocket* parse_icmp_payload(utp_context *ctx, const byte *buffer, size_
 	assert(to);
 	if (!to) return NULL;
 
-	const PackedSockAddr addr((const SOCKADDR_STORAGE*)to, tolen);
+	PackedSockAddr addr;
+	PackedSockAddr_set(&addr, (const SOCKADDR_STORAGE*)to, tolen);
 
 	// ICMP packets are only required to quote the first 8 bytes of the layer4
 	// payload.  The UDP payload is 8 bytes, and the UTP header is another 20
@@ -3150,7 +3158,8 @@ int utp_process_icmp_error(utp_context *ctx, const byte *buffer, size_t len, con
 	if (!conn) return 0;
 
 	const int err = (conn->state == CS_SYN_SENT) ? UTP_ECONNREFUSED : UTP_ECONNRESET;
-	const PackedSockAddr addr((const SOCKADDR_STORAGE*)to, tolen);
+	PackedSockAddr addr;
+	PackedSockAddr_set(&addr, (const SOCKADDR_STORAGE*)to, tolen);
 
 	switch(conn->state) {
 		// Don't pass on errors for idle/closed connections
@@ -3359,7 +3368,7 @@ int utp_getpeername(utp_socket *conn, struct sockaddr *addr, socklen_t *addrlen)
 	if (conn->state == CS_UNINITIALIZED) return -1;
 
 	socklen_t len;
-	const SOCKADDR_STORAGE sa = conn->addr.get_sockaddr_storage(&len);
+	const SOCKADDR_STORAGE sa = PackedSockAddr_get_sockaddr_storage(&conn->addr, &len);
 	if (len < *addrlen)
 		*addrlen = len;
 	memcpy(addr, &sa, *addrlen);

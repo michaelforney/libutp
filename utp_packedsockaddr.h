@@ -25,13 +25,18 @@
 
 #include "utp_types.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct PackedSockAddr PackedSockAddr;
 struct PACKED_ATTRIBUTE PackedSockAddr {
 	// The values are always stored here in network byte order
 	union {
-		byte _in6[16];		// IPv6
-		uint16 _in6w[8];	// IPv6, word based (for convenience)
-		uint32 _in6d[4];	// Dword access
-		in6_addr _in6addr;	// For convenience
+		byte _in6[16];			// IPv6
+		uint16 _in6w[8];		// IPv6, word based (for convenience)
+		uint32 _in6d[4];		// Dword access
+		struct in6_addr _in6addr;	// For convenience
 	} _in;
 
 	// Host byte order
@@ -43,18 +48,19 @@ struct PACKED_ATTRIBUTE PackedSockAddr {
 	#define _sin6w _in._in6w
 	#define _sin6d _in._in6d
 
-	byte get_family() const;
-	bool operator==(const PackedSockAddr& rhs) const;
-	bool operator!=(const PackedSockAddr& rhs) const;
-	void set(const SOCKADDR_STORAGE* sa, socklen_t len);
-
-	PackedSockAddr(const SOCKADDR_STORAGE* sa, socklen_t len);
-	PackedSockAddr(void);
-
-	SOCKADDR_STORAGE get_sockaddr_storage(socklen_t *len) const;
-	cstr fmt(str s, size_t len) const;
-
-	uint32 compute_hash() const;
 } ALIGNED_ATTRIBUTE(4);
+
+byte PackedSockAddr_get_family(const PackedSockAddr *addr);
+
+bool PackedSockAddr_equal(const PackedSockAddr *lhs, const PackedSockAddr *rhs);
+void PackedSockAddr_set(PackedSockAddr *addr, const SOCKADDR_STORAGE *sa, socklen_t len);
+
+SOCKADDR_STORAGE PackedSockAddr_get_sockaddr_storage(const PackedSockAddr *addr, socklen_t *len);
+
+cstr PackedSockAddr_fmt(const PackedSockAddr *addr, str s, size_t len);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif //__UTP_PACKEDSOCKADDR_H__
