@@ -121,15 +121,15 @@ struct PACKED_ATTRIBUTE PacketFormatV1 {
 	// Type of the first extension header
 	byte ext;
 	// connection ID
-	uint16_big connid;
-	uint32_big tv_usec;
-	uint32_big reply_micro;
+	uint16 connid;
+	uint32 tv_usec;
+	uint32 reply_micro;
 	// receive window size in bytes
-	uint32_big windowsize;
+	uint32 windowsize;
 	// Sequence number
-	uint16_big seq_nr;
+	uint16 seq_nr;
 	// Acknowledgment number
-	uint16_big ack_nr;
+	uint16 ack_nr;
 };
 
 struct PACKED_ATTRIBUTE PacketFormatAckV1 {
@@ -734,8 +734,8 @@ void UTPSocket::send_data(byte* b, size_t length, bandwidth_type_t type, uint32 
 	uint64 time = utp_call_get_microseconds(ctx, this);
 
 	PacketFormatV1* b1 = (PacketFormatV1*)b;
-	b1->tv_usec = (uint32)time;
-	b1->reply_micro = reply_micro;
+	b1->tv_usec = htonl(time);
+	b1->reply_micro = htonl(reply_micro);
 
 	last_sent_packet = ctx->current_ms;
 
@@ -758,8 +758,8 @@ void UTPSocket::send_data(byte* b, size_t length, bandwidth_type_t type, uint32 
 	}
 #if UTP_DEBUG_LOGGING
 	int flags2 = b1->type();
-	uint16 seq_nr = b1->seq_nr;
-	uint16 ack_nr = b1->ack_nr;
+	uint16 seq_nr = ntohs(b1->seq_nr);
+	uint16 ack_nr = ntohs(b1->ack_nr);
 	log(UTP_LOG_DEBUG, "send %s len:%u id:%u timestamp:" I64u " reply_micro:%u flags:%s seq_nr:%u ack_nr:%u",
 		addrfmt(addr, addrbuf), (uint)length, conn_id_send, time, reply_micro, flagnames[flags2],
 		seq_nr, ack_nr);
@@ -778,10 +778,10 @@ void UTPSocket::send_ack(bool synack)
 	pfa.pf.set_version(1);
 	pfa.pf.set_type(ST_STATE);
 	pfa.pf.ext = 0;
-	pfa.pf.connid = conn_id_send;
-	pfa.pf.ack_nr = ack_nr;
-	pfa.pf.seq_nr = seq_nr;
-	pfa.pf.windowsize = (uint32)last_rcv_win;
+	pfa.pf.connid = htons(conn_id_send);
+	pfa.pf.ack_nr = htons(ack_nr);
+	pfa.pf.seq_nr = htons(seq_nr);
+	pfa.pf.windowsize = htonl(last_rcv_win);
 	len = sizeof(PacketFormatV1);
 
 	// we never need to send EACK for connections
@@ -853,9 +853,9 @@ void UTPSocket::send_rst(utp_context *ctx,
 	pf1.set_version(1);
 	pf1.set_type(ST_RESET);
 	pf1.ext = 0;
-	pf1.connid = conn_id_send;
-	pf1.ack_nr = ack_nr;
-	pf1.seq_nr = seq_nr;
+	pf1.connid = htons(conn_id_send);
+	pf1.ack_nr = htons(ack_nr);
+	pf1.seq_nr = htons(seq_nr);
 	pf1.windowsize = 0;
 	len = sizeof(PacketFormatV1);
 
@@ -881,7 +881,7 @@ void UTPSocket::send_packet(OutgoingPacket *pkt)
 	pkt->need_resend = false;
 
 	PacketFormatV1* p1 = (PacketFormatV1*)pkt->data;
-	p1->ack_nr = ack_nr;
+	p1->ack_nr = htons(ack_nr);
 	pkt->time_sent = utp_call_get_microseconds(this->ctx, this);
 
 	//socklen_t salen;
@@ -1078,15 +1078,15 @@ void UTPSocket::write_outgoing_packet(size_t payload, uint flags, struct utp_iov
 		p1->set_version(1);
 		p1->set_type(flags);
 		p1->ext = 0;
-		p1->connid = conn_id_send;
-		p1->windowsize = (uint32)last_rcv_win;
-		p1->ack_nr = ack_nr;
+		p1->connid = htons(conn_id_send);
+		p1->windowsize = htonl(last_rcv_win);
+		p1->ack_nr = htons(ack_nr);
 
 		if (append) {
 			// Remember the message in the outgoing queue.
 			outbuf.ensure_size(seq_nr, cur_window_packets);
 			outbuf.put(seq_nr, pkt);
-			p1->seq_nr = seq_nr;
+			p1->seq_nr = htons(seq_nr);
 			seq_nr++;
 			cur_window_packets++;
 		}
@@ -1776,16 +1776,16 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 	const PacketFormatV1 *pf1 = (PacketFormatV1*)packet;
 	const byte *packet_end = packet + len;
 
-	uint16 pk_seq_nr = pf1->seq_nr;
-	uint16 pk_ack_nr = pf1->ack_nr;
+	uint16 pk_seq_nr = ntohs(pf1->seq_nr);
+	uint16 pk_ack_nr = ntohs(pf1->ack_nr);
 	uint8 pk_flags   = pf1->type();
 
 	if (pk_flags >= ST_NUM_STATES) return 0;
 
 	#if UTP_DEBUG_LOGGING
-	conn->log(UTP_LOG_DEBUG, "Got %s. seq_nr:%u ack_nr:%u state:%s timestamp:" I64u " reply_micro:%u"
+	conn->log(UTP_LOG_DEBUG, "Got %s. seq_nr:%u ack_nr:%u state:%s timestamp:" I32u " reply_micro:%u"
 		, flagnames[pk_flags], pk_seq_nr, pk_ack_nr, statenames[conn->state]
-		, uint64(pf1->tv_usec), (uint32)(pf1->reply_micro));
+		, ntohl(pf1->tv_usec), ntohl(pf1->reply_micro));
 	#endif
 
 	// mark receipt time
@@ -1995,7 +1995,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 		seqnr, (uint)conn->max_window, (uint)(min_rtt / 1000), conn->rtt);
 	#endif
 
-	uint64 p = pf1->tv_usec;
+	uint64 p = ntohl(pf1->tv_usec);
 
 	conn->last_measured_delay = conn->ctx->current_ms;
 
@@ -2017,7 +2017,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 		}
 	}
 
-	const uint32 actual_delay = (uint32(pf1->reply_micro)==INT_MAX?0:uint32(pf1->reply_micro));
+	const uint32 actual_delay = (ntohl(pf1->reply_micro)==INT_MAX?0:ntohl(pf1->reply_micro));
 
 	// if the actual delay is 0, it means the other end
 	// hasn't received a sample from us yet, and doesn't
@@ -2145,7 +2145,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 	// sanity check, the other end should never ack packets
 	// past the point we've sent
 	if (acks <= conn->cur_window_packets) {
-		conn->max_window_user = pf1->windowsize;
+		conn->max_window_user = ntohl(pf1->windowsize);
 
 		// If max user window is set to 0, then we startup a timer
 		// That will reset it to 1 after 15 seconds.
@@ -2782,9 +2782,9 @@ int utp_connect(utp_socket *conn, const struct sockaddr *to, socklen_t tolen)
 	p1->set_version(1);
 	p1->set_type(ST_SYN);
 	p1->ext = 0;
-	p1->connid = conn->conn_id_recv;
-	p1->windowsize = (uint32)conn->last_rcv_win;
-	p1->seq_nr = conn->seq_nr;
+	p1->connid = htons(conn->conn_id_recv);
+	p1->windowsize = htonl(conn->last_rcv_win);
+	p1->seq_nr = htons(conn->seq_nr);
 	pkt->transmissions = 0;
 	pkt->length = header_size;
 	pkt->payload = 0;
@@ -2833,7 +2833,7 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 
 	const PacketFormatV1 *pf1 = (PacketFormatV1*)buffer;
 	const byte version = UTP_Version(pf1);
-	const uint32 id = uint32(pf1->connid);
+	const uint32 id = ntohs(pf1->connid);
 
 	if (version != 1) {
 		#if UTP_DEBUG_LOGGING
@@ -2845,7 +2845,7 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 
 	#if UTP_DEBUG_LOGGING
 	ctx->log(UTP_LOG_DEBUG, NULL, "recv %s len:%u id:%u", addrfmt(addr, addrbuf), (uint)len, id);
-	ctx->log(UTP_LOG_DEBUG, NULL, "recv id:%u seq_nr:%u ack_nr:%u", id, (uint)pf1->seq_nr, (uint)pf1->ack_nr);
+	ctx->log(UTP_LOG_DEBUG, NULL, "recv id:%u seq_nr:%u ack_nr:%u", id, htons(pf1->seq_nr), htons(pf1->ack_nr));
 	#endif
 
 	const byte flags = pf1->type();
@@ -2909,7 +2909,7 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 	}
 
 	// We have not found a matching utp_socket, and this isn't a SYN.  Reject it.
-	const uint32 seq_nr = pf1->seq_nr;
+	const uint32 seq_nr = ntohs(pf1->seq_nr);
 	if (flags != ST_SYN) {
 		ctx->current_ms = utp_call_get_milliseconds(ctx, NULL);
 
@@ -3045,7 +3045,7 @@ static UTPSocket* parse_icmp_payload(utp_context *ctx, const byte *buffer, size_
 
 	const PacketFormatV1 *pf = (PacketFormatV1*)buffer;
 	const byte version = UTP_Version(pf);
-	const uint32 id = uint32(pf->connid);
+	const uint32 id = ntohs(pf->connid);
 
 	if (version != 1) {
 		#if UTP_DEBUG_LOGGING

@@ -57,30 +57,6 @@ template <typename T> static inline T max(T a, T b, T c) { return max(max(a,b),c
 	#pragma pack(push,1)
 #endif
 
-
-namespace aux
-{
-	FORCEINLINE uint16 host_to_network(uint16 i) { return htons(i); }
-	FORCEINLINE uint32 host_to_network(uint32 i) { return htonl(i); }
-	FORCEINLINE int32 host_to_network(int32 i) { return htonl(i); }
-	FORCEINLINE uint16 network_to_host(uint16 i) { return ntohs(i); }
-	FORCEINLINE uint32 network_to_host(uint32 i) { return ntohl(i); }
-	FORCEINLINE int32 network_to_host(int32 i) { return ntohl(i); }
-}
-
-template <class T>
-struct PACKED_ATTRIBUTE big_endian
-{
-	T operator=(T i) { m_integer = aux::host_to_network(i); return i; }
-	operator T() const { return aux::network_to_host(m_integer); }
-private:
-	T m_integer;
-};
-
-typedef big_endian<int32> int32_big;
-typedef big_endian<uint32> uint32_big;
-typedef big_endian<uint16> uint16_big;
-
 #if (defined(__SVR4) && defined(__sun))
 	#pragma pack(0)
 #else
