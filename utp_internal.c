@@ -109,14 +109,11 @@ char addrbuf[65];
 #define PACKET_SIZE_BIG 1400
 #define PACKET_SIZE_HUGE_BUCKET 4
 
+typedef struct PacketFormatV1 PacketFormatV1;
 struct PACKED_ATTRIBUTE PacketFormatV1 {
 	// packet_type (4 high bits)
 	// protocol version (4 low bits)
 	byte ver_type;
-	byte version() const { return ver_type & 0xf; }
-	byte type() const { return ver_type >> 4; }
-	void set_version(byte v) { ver_type = (ver_type & 0xf0) | (v & 0xf); }
-	void set_type(byte t) { ver_type = (ver_type & 0xf) | (t << 4); }
 
 	// Type of the first extension header
 	byte ext;
@@ -132,6 +129,27 @@ struct PACKED_ATTRIBUTE PacketFormatV1 {
 	uint16 ack_nr;
 };
 
+byte packet_format_version(const PacketFormatV1 *pf)
+{
+	return pf->ver_type & 0xf;
+}
+
+byte packet_format_type(const PacketFormatV1 *pf)
+{
+	return pf->ver_type >> 4;
+}
+
+void packet_format_set_version(PacketFormatV1 *pf, byte v)
+{
+	pf->ver_type = (pf->ver_type & 0xf0) | (v & 0xf);
+}
+
+void packet_format_set_type(PacketFormatV1 *pf, byte t)
+{
+	pf->ver_type = (pf->ver_type & 0xf) | (t << 4);
+}
+
+typedef struct PacketFormatAckV1 PacketFormatAckV1;
 struct PACKED_ATTRIBUTE PacketFormatAckV1 {
 	PacketFormatV1 pf;
 	byte ext_next;
@@ -154,11 +172,13 @@ enum {
 	ST_NUM_STATES,		// used for bounds checking
 };
 
+#if UTP_DEBUG_LOGGING
 static const cstr flagnames[] = {
 	"ST_DATA","ST_FIN","ST_STATE","ST_RESET","ST_SYN"
 };
+#endif
 
-enum CONN_STATE {
+typedef enum {
 	CS_UNINITIALIZED = 0,
 	CS_IDLE,
 	CS_SYN_SENT,
@@ -167,12 +187,15 @@ enum CONN_STATE {
 	CS_CONNECTED_FULL,
 	CS_RESET,
 	CS_DESTROY
-};
+} CONN_STATE;
 
+#if UTP_DEBUG_LOGGING
 static const cstr statenames[] = {
 	"UNINITIALIZED", "IDLE","SYN_SENT", "SYN_RECV", "CONNECTED","CONNECTED_FULL","DESTROY_DELAY","RESET","DESTROY"
 };
+#endif
 
+typedef struct OutgoingPacket OutgoingPacket;
 struct OutgoingPacket {
 	size_t length;
 	size_t payload;
@@ -182,42 +205,59 @@ struct OutgoingPacket {
 	byte data[1];
 };
 
+typedef struct SizableCircularBuffer SizableCircularBuffer;
 struct SizableCircularBuffer {
 	// This is the mask. Since it's always a power of 2, adding 1 to this value will return the size.
 	size_t mask;
 	// This is the elements that the circular buffer points to
 	void **elements;
-
-	void *get(size_t i) const { assert(elements); return elements ? elements[i & mask] : NULL; }
-	void put(size_t i, void *data) { assert(elements); elements[i&mask] = data; }
-
-	void grow(size_t item, size_t index);
-	void ensure_size(size_t item, size_t index) { if (index > mask) grow(item, index); }
-	size_t size() { return mask + 1; }
 };
+
+void *circbuf_get(const SizableCircularBuffer *buf, size_t i)
+{
+	assert(buf->elements);
+	return buf->elements ? buf->elements[i & buf->mask] : NULL;
+}
+
+void circbuf_put(SizableCircularBuffer *buf, size_t i, void *data)
+{
+	assert(buf->elements);
+	buf->elements[i&buf->mask] = data;
+}
 
 // Item contains the element we want to make space for
 // index is the index in the list.
-void SizableCircularBuffer::grow(size_t item, size_t index)
+void circbuf_grow(SizableCircularBuffer *buf, size_t item, size_t index)
 {
 	// Figure out the new size.
-	size_t size = mask + 1;
+	size_t size = buf->mask + 1;
 	do size *= 2; while (index >= size);
 
 	// Allocate the new buffer
-	void **buf = (void**)calloc(size, sizeof(void*));
+	void **elements = (void**)calloc(size, sizeof(void*));
 
 	size--;
 
 	// Copy elements from the old buffer to the new buffer
-	for (size_t i = 0; i <= mask; i++) {
-		buf[(item - index + i) & size] = get(item - index + i);
+	for (size_t i = 0; i <= buf->mask; i++) {
+		elements[(item - index + i) & size] = circbuf_get(buf, item - index + i);
 	}
 
 	// Swap to the newly allocated buffer
-	mask = size;
-	free(elements);
-	elements = buf;
+	buf->mask = size;
+	free(buf->elements);
+	buf->elements = elements;
+}
+
+void circbuf_ensure_size(SizableCircularBuffer *buf, size_t item, size_t index)
+{
+	if (index > buf->mask)
+		circbuf_grow(buf, item, index);
+}
+
+size_t circbuf_size(const SizableCircularBuffer *buf)
+{
+	return buf->mask + 1;
 }
 
 // compare if lhs is less than rhs, taking wrapping
@@ -237,6 +277,7 @@ bool wrapping_compare_less(uint32 lhs, uint32 rhs, uint32 mask)
 	return dist_up < dist_down;
 }
 
+typedef struct DelayHist DelayHist;
 struct DelayHist {
 	uint32 delay_base;
 
@@ -258,142 +299,140 @@ struct DelayHist {
 	uint64 delay_base_time;
 
 	bool delay_base_initialized;
-
-	void clear(uint64 current_ms)
-	{
-		delay_base_initialized = false;
-		delay_base = 0;
-		cur_delay_idx = 0;
-		delay_base_idx = 0;
-		delay_base_time = current_ms;
-		for (size_t i = 0; i < CUR_DELAY_SIZE; i++) {
-			cur_delay_hist[i] = 0;
-		}
-		for (size_t i = 0; i < DELAY_BASE_HISTORY; i++) {
-			delay_base_hist[i] = 0;
-		}
-	}
-
-	void shift(const uint32 offset)
-	{
-		// the offset should never be "negative"
-		// assert(offset < 0x10000000);
-
-		// increase all of our base delays by this amount
-		// this is used to take clock skew into account
-		// by observing the other side's changes in its base_delay
-		for (size_t i = 0; i < DELAY_BASE_HISTORY; i++) {
-			delay_base_hist[i] += offset;
-		}
-		delay_base += offset;
-	}
-
-	void add_sample(const uint32 sample, uint64 current_ms)
-	{
-		// The two clocks (in the two peers) are assumed not to
-		// progress at the exact same rate. They are assumed to be
-		// drifting, which causes the delay samples to contain
-		// a systematic error, either they are under-
-		// estimated or over-estimated. This is why we update the
-		// delay_base every two minutes, to adjust for this.
-
-		// This means the values will keep drifting and eventually wrap.
-		// We can cross the wrapping boundry in two directions, either
-		// going up, crossing the highest value, or going down, crossing 0.
-
-		// if the delay_base is close to the max value and sample actually
-		// wrapped on the other end we would see something like this:
-		// delay_base = 0xffffff00, sample = 0x00000400
-		// sample - delay_base = 0x500 which is the correct difference
-
-		// if the delay_base is instead close to 0, and we got an even lower
-		// sample (that will eventually update the delay_base), we may see
-		// something like this:
-		// delay_base = 0x00000400, sample = 0xffffff00
-		// sample - delay_base = 0xfffffb00
-		// this needs to be interpreted as a negative number and the actual
-		// recorded delay should be 0.
-
-		// It is important that all arithmetic that assume wrapping
-		// is done with unsigned intergers. Signed integers are not guaranteed
-		// to wrap the way unsigned integers do. At least GCC takes advantage
-		// of this relaxed rule and won't necessarily wrap signed ints.
-
-		// remove the clock offset and propagation delay.
-		// delay base is min of the sample and the current
-		// delay base. This min-operation is subject to wrapping
-		// and care needs to be taken to correctly choose the
-		// true minimum.
-
-		// specifically the problem case is when delay_base is very small
-		// and sample is very large (because it wrapped past zero), sample
-		// needs to be considered the smaller
-
-		if (!delay_base_initialized) {
-			// delay_base being 0 suggests that we haven't initialized
-			// it or its history with any real measurements yet. Initialize
-			// everything with this sample.
-			for (size_t i = 0; i < DELAY_BASE_HISTORY; i++) {
-				// if we don't have a value, set it to the current sample
-				delay_base_hist[i] = sample;
-				continue;
-			}
-			delay_base = sample;
-			delay_base_initialized = true;
-		}
-
-		if (wrapping_compare_less(sample, delay_base_hist[delay_base_idx], TIMESTAMP_MASK)) {
-			// sample is smaller than the current delay_base_hist entry
-			// update it
-			delay_base_hist[delay_base_idx] = sample;
-		}
-
-		// is sample lower than delay_base? If so, update delay_base
-		if (wrapping_compare_less(sample, delay_base, TIMESTAMP_MASK)) {
-			// sample is smaller than the current delay_base
-			// update it
-			delay_base = sample;
-		}
-
-		// this operation may wrap, and is supposed to
-		const uint32 delay = sample - delay_base;
-		// sanity check. If this is triggered, something fishy is going on
-		// it means the measured sample was greater than 32 seconds!
-		//assert(delay < 0x2000000);
-
-		cur_delay_hist[cur_delay_idx] = delay;
-		cur_delay_idx = (cur_delay_idx + 1) % CUR_DELAY_SIZE;
-
-		// once every minute
-		if (current_ms - delay_base_time > 60 * 1000) {
-			delay_base_time = current_ms;
-			delay_base_idx = (delay_base_idx + 1) % DELAY_BASE_HISTORY;
-			// clear up the new delay base history spot by initializing
-			// it to the current sample, then update it
-			delay_base_hist[delay_base_idx] = sample;
-			delay_base = delay_base_hist[0];
-			// Assign the lowest delay in the last 2 minutes to delay_base
-			for (size_t i = 0; i < DELAY_BASE_HISTORY; i++) {
-				if (wrapping_compare_less(delay_base_hist[i], delay_base, TIMESTAMP_MASK))
-					delay_base = delay_base_hist[i];
-			}
-		}
-	}
-
-	uint32 get_value()
-	{
-		uint32 value = UINT_MAX;
-		for (size_t i = 0; i < CUR_DELAY_SIZE; i++) {
-			value = MIN(cur_delay_hist[i], value);
-		}
-		// value could be UINT_MAX if we have no samples yet...
-		return value;
-	}
 };
 
-struct UTPSocket {
-	~UTPSocket();
+void delay_hist_clear(DelayHist *hist, uint64 current_ms)
+{
+	hist->delay_base_initialized = false;
+	hist->delay_base = 0;
+	hist->cur_delay_idx = 0;
+	hist->delay_base_idx = 0;
+	hist->delay_base_time = current_ms;
+	for (size_t i = 0; i < CUR_DELAY_SIZE; i++) {
+		hist->cur_delay_hist[i] = 0;
+	}
+	for (size_t i = 0; i < DELAY_BASE_HISTORY; i++) {
+		hist->delay_base_hist[i] = 0;
+	}
+}
 
+void delay_hist_shift(DelayHist *hist, const uint32 offset)
+{
+	// the offset should never be "negative"
+	// assert(offset < 0x10000000);
+
+	// increase all of our base delays by this amount
+	// this is used to take clock skew into account
+	// by observing the other side's changes in its base_delay
+	for (size_t i = 0; i < DELAY_BASE_HISTORY; i++) {
+		hist->delay_base_hist[i] += offset;
+	}
+	hist->delay_base += offset;
+}
+
+void delay_hist_add_sample(DelayHist *hist, const uint32 sample, uint64 current_ms)
+{
+	// The two clocks (in the two peers) are assumed not to
+	// progress at the exact same rate. They are assumed to be
+	// drifting, which causes the delay samples to contain
+	// a systematic error, either they are under-
+	// estimated or over-estimated. This is why we update the
+	// delay_base every two minutes, to adjust for this.
+
+	// This means the values will keep drifting and eventually wrap.
+	// We can cross the wrapping boundry in two directions, either
+	// going up, crossing the highest value, or going down, crossing 0.
+
+	// if the delay_base is close to the max value and sample actually
+	// wrapped on the other end we would see something like this:
+	// delay_base = 0xffffff00, sample = 0x00000400
+	// sample - delay_base = 0x500 which is the correct difference
+
+	// if the delay_base is instead close to 0, and we got an even lower
+	// sample (that will eventually update the delay_base), we may see
+	// something like this:
+	// delay_base = 0x00000400, sample = 0xffffff00
+	// sample - delay_base = 0xfffffb00
+	// this needs to be interpreted as a negative number and the actual
+	// recorded delay should be 0.
+
+	// It is important that all arithmetic that assume wrapping
+	// is done with unsigned intergers. Signed integers are not guaranteed
+	// to wrap the way unsigned integers do. At least GCC takes advantage
+	// of this relaxed rule and won't necessarily wrap signed ints.
+
+	// remove the clock offset and propagation delay.
+	// delay base is min of the sample and the current
+	// delay base. This min-operation is subject to wrapping
+	// and care needs to be taken to correctly choose the
+	// true minimum.
+
+	// specifically the problem case is when delay_base is very small
+	// and sample is very large (because it wrapped past zero), sample
+	// needs to be considered the smaller
+
+	if (!hist->delay_base_initialized) {
+		// delay_base being 0 suggests that we haven't initialized
+		// it or its history with any real measurements yet. Initialize
+		// everything with this sample.
+		for (size_t i = 0; i < DELAY_BASE_HISTORY; i++) {
+			// if we don't have a value, set it to the current sample
+			hist->delay_base_hist[i] = sample;
+			continue;
+		}
+		hist->delay_base = sample;
+		hist->delay_base_initialized = true;
+	}
+
+	if (wrapping_compare_less(sample, hist->delay_base_hist[hist->delay_base_idx], TIMESTAMP_MASK)) {
+		// sample is smaller than the current delay_base_hist entry
+		// update it
+		hist->delay_base_hist[hist->delay_base_idx] = sample;
+	}
+
+	// is sample lower than delay_base? If so, update delay_base
+	if (wrapping_compare_less(sample, hist->delay_base, TIMESTAMP_MASK)) {
+		// sample is smaller than the current delay_base
+		// update it
+		hist->delay_base = sample;
+	}
+
+	// this operation may wrap, and is supposed to
+	const uint32 delay = sample - hist->delay_base;
+	// sanity check. If this is triggered, something fishy is going on
+	// it means the measured sample was greater than 32 seconds!
+	//assert(delay < 0x2000000);
+
+	hist->cur_delay_hist[hist->cur_delay_idx] = delay;
+	hist->cur_delay_idx = (hist->cur_delay_idx + 1) % CUR_DELAY_SIZE;
+
+	// once every minute
+	if (current_ms - hist->delay_base_time > 60 * 1000) {
+		hist->delay_base_time = current_ms;
+		hist->delay_base_idx = (hist->delay_base_idx + 1) % DELAY_BASE_HISTORY;
+		// clear up the new delay base history spot by initializing
+		// it to the current sample, then update it
+		hist->delay_base_hist[hist->delay_base_idx] = sample;
+		hist->delay_base = hist->delay_base_hist[0];
+		// Assign the lowest delay in the last 2 minutes to delay_base
+		for (size_t i = 0; i < DELAY_BASE_HISTORY; i++) {
+			if (wrapping_compare_less(hist->delay_base_hist[i], hist->delay_base, TIMESTAMP_MASK))
+				hist->delay_base = hist->delay_base_hist[i];
+		}
+	}
+}
+
+uint32 delay_hist_get_value(DelayHist *hist)
+{
+	uint32 value = UINT_MAX;
+	for (size_t i = 0; i < CUR_DELAY_SIZE; i++) {
+		value = MIN(hist->cur_delay_hist[i], value);
+	}
+	// value could be UINT_MAX if we have no samples yet...
+	return value;
+}
+
+struct UTPSocket {
 	PackedSockAddr addr;
 	utp_context *ctx;
 
@@ -478,7 +517,7 @@ struct UTPSocket {
 	// timestamp of the last time the cwnd was full
 	// this is used to prevent the congestion window
 	// from growing when we're not sending at capacity
-	mutable uint64 last_maxed_out_window;
+	uint64 last_maxed_out_window;
 
 	void *userdata;
 
@@ -559,89 +598,88 @@ struct UTPSocket {
 	// the slow-start threshold, in bytes
 	size_t ssthresh;
 
-	void log(int level, char const *fmt, ...)
-	{
-		va_list va;
-		char buf[4096], buf2[4096];
+};
 
-		// don't bother with vsnprintf() etc calls if we're not going to log.
-		if (!utp_context_would_log(ctx, level)) {
-			return;
-		}
+void utp_socket_log(UTPSocket *conn, int level, char const *fmt, ...)
+{
+	va_list va;
+	char buf[4096], buf2[4096];
 
-		va_start(va, fmt);
-		vsnprintf(buf, 4096, fmt, va);
-		va_end(va);
-		buf[4095] = '\0';
-
-		snprintf(buf2, 4096, "%p %s %06u %s", this, addrfmt(addr, addrbuf), conn_id_recv, buf);
-		buf2[4095] = '\0';
-
-		utp_context_log_unchecked(ctx, this, buf2);
+	// don't bother with vsnprintf() etc calls if we're not going to log.
+	if (!utp_context_would_log(conn->ctx, level)) {
+		return;
 	}
 
-	void schedule_ack();
+	va_start(va, fmt);
+	vsnprintf(buf, 4096, fmt, va);
+	va_end(va);
+	buf[4095] = '\0';
 
-	// called every time mtu_floor or mtu_ceiling are adjusted
-	void mtu_search_update();
-	void mtu_reset();
+	snprintf(buf2, 4096, "%p %s %06u %s", conn, addrfmt(conn->addr, addrbuf), conn->conn_id_recv, buf);
+	buf2[4095] = '\0';
 
-	// Calculates the current receive window
-	size_t get_rcv_window()
-	{
-		// Trim window down according to what's already in buffer.
-		const size_t numbuf = utp_call_get_read_buffer_size(this->ctx, this);
-		assert((int)numbuf >= 0);
-		return opt_rcvbuf > numbuf ? opt_rcvbuf - numbuf : 0;
+	utp_context_log_unchecked(conn->ctx, conn, buf2);
+}
+
+void utp_socket_schedule_ack(utp_socket *conn);
+
+// called every time mtu_floor or mtu_ceiling are adjusted
+void utp_socket_mtu_search_update(utp_socket *conn);
+
+void utp_socket_mtu_reset(utp_socket *conn);
+
+// Calculates the current receive window
+size_t utp_socket_get_rcv_window(utp_socket *conn)
+{
+	// Trim window down according to what's already in buffer.
+	const size_t numbuf = utp_call_get_read_buffer_size(conn->ctx, conn);
+	assert((int)numbuf >= 0);
+	return conn->opt_rcvbuf > numbuf ? conn->opt_rcvbuf - numbuf : 0;
+}
+
+// Test if we're ready to decay max_window
+// XXX this breaks when spaced by > INT_MAX/2, which is 49
+// days; the failure mode in that case is we do an extra decay
+// or fail to do one when we really shouldn't.
+bool utp_socket_can_decay_win(const utp_socket *conn, int64 msec)
+{
+        return (msec - conn->last_rwin_decay) >= MAX_WINDOW_DECAY;
+}
+
+// If we can, decay max window, returns true if we actually did so
+void utp_socket_maybe_decay_win(utp_socket *conn, uint64 current_ms)
+{
+	if (utp_socket_can_decay_win(conn, current_ms)) {
+		// TCP uses 0.5
+		conn->max_window = (size_t)(conn->max_window * .5);
+		conn->last_rwin_decay = current_ms;
+		if (conn->max_window < MIN_WINDOW_SIZE)
+			conn->max_window = MIN_WINDOW_SIZE;
+		conn->slow_start = false;
+		conn->ssthresh = conn->max_window;
 	}
+}
 
-	// Test if we're ready to decay max_window
-	// XXX this breaks when spaced by > INT_MAX/2, which is 49
-	// days; the failure mode in that case is we do an extra decay
-	// or fail to do one when we really shouldn't.
-	bool can_decay_win(int64 msec) const
-	{
-                return (msec - last_rwin_decay) >= MAX_WINDOW_DECAY;
-	}
+size_t utp_socket_get_udp_mtu(utp_socket *conn)
+{
+	socklen_t len;
+	SOCKADDR_STORAGE sa = PackedSockAddr_get_sockaddr_storage(&conn->addr, &len);
+	return utp_call_get_udp_mtu(conn->ctx, conn, (const struct sockaddr *)&sa, len);
+}
 
-	// If we can, decay max window, returns true if we actually did so
-	void maybe_decay_win(uint64 current_ms)
-	{
-		if (can_decay_win(current_ms)) {
-			// TCP uses 0.5
-			max_window = (size_t)(max_window * .5);
-			last_rwin_decay = current_ms;
-			if (max_window < MIN_WINDOW_SIZE)
-				max_window = MIN_WINDOW_SIZE;
-			slow_start = false;
-			ssthresh = max_window;
-		}
-	}
+size_t utp_socket_get_udp_overhead(utp_socket *conn)
+{
+	socklen_t len;
+	SOCKADDR_STORAGE sa = PackedSockAddr_get_sockaddr_storage(&conn->addr, &len);
+	return utp_call_get_udp_overhead(conn->ctx, conn, (const struct sockaddr *)&sa, len);
+}
 
-	size_t get_header_size() const
-	{
-		return sizeof(PacketFormatV1);
-	}
+size_t utp_socket_get_overhead(utp_socket *conn)
+{
+	return utp_socket_get_udp_overhead(conn) + sizeof(PacketFormatV1);
+}
 
-	size_t get_udp_mtu()
-	{
-		socklen_t len;
-		SOCKADDR_STORAGE sa = PackedSockAddr_get_sockaddr_storage(&addr, &len);
-		return utp_call_get_udp_mtu(this->ctx, this, (const struct sockaddr *)&sa, len);
-	}
-
-	size_t get_udp_overhead()
-	{
-		socklen_t len;
-		SOCKADDR_STORAGE sa = PackedSockAddr_get_sockaddr_storage(&addr, &len);
-		return utp_call_get_udp_overhead(this->ctx, this, (const struct sockaddr *)&sa, len);
-	}
-
-	size_t get_overhead()
-	{
-		return get_udp_overhead() + get_header_size();
-	}
-
+/*
 	void send_data(byte* b, size_t length, bandwidth_type_t type, uint32 flags = 0);
 
 	void send_ack(bool synack = false);
@@ -667,14 +705,14 @@ struct UTPSocket {
 	size_t selective_ack_bytes(uint base, const byte* mask, byte len, int64& min_rtt);
 	void selective_ack(uint base, const byte *mask, byte len);
 	void apply_ccontrol(size_t bytes_acked, uint32 actual_delay, int64 min_rtt);
-	size_t get_packet_size() const;
-};
+*/
+size_t utp_socket_get_packet_size(const utp_socket *conn);
 
-void removeSocketFromAckList(UTPSocket *conn)
+void removeSocketFromAckList(utp_socket *conn)
 {
 	if (conn->ida >= 0)
 	{
-		UTPSocket *last = conn->ctx->ack_sockets[conn->ctx->ack_sockets_count - 1];
+		utp_socket *last = conn->ctx->ack_sockets[conn->ctx->ack_sockets_count - 1];
 
 		assert(last->ida < (int)(conn->ctx->ack_sockets_count));
 		assert(conn->ctx->ack_sockets[last->ida] == last);
@@ -704,62 +742,63 @@ static void utp_register_sent_packet(utp_context *ctx, size_t length)
 	}
 }
 
-void send_to_addr(utp_context *ctx, const byte *p, size_t len, const PackedSockAddr &addr, int flags = 0)
+void send_to_addr(utp_context *ctx, const byte *p, size_t len, const PackedSockAddr *addr, int flags)
 {
 	socklen_t tolen;
-	SOCKADDR_STORAGE to = PackedSockAddr_get_sockaddr_storage(&addr, &tolen);
+	SOCKADDR_STORAGE to = PackedSockAddr_get_sockaddr_storage(addr, &tolen);
 	utp_register_sent_packet(ctx, len);
 	utp_call_sendto(ctx, NULL, p, len, (const struct sockaddr *)&to, tolen, flags);
 }
 
-void UTPSocket::schedule_ack()
+void utp_socket_schedule_ack(utp_socket *conn)
 {
-	if (ida == -1){
+	if (conn->ida == -1){
+		utp_context *ctx = conn->ctx;
 		#if UTP_DEBUG_LOGGING
-		log(UTP_LOG_DEBUG, "schedule_ack");
+		utp_socket_log(conn, UTP_LOG_DEBUG, "schedule_ack");
 		#endif
 		if (ctx->ack_sockets_count >= ctx->ack_sockets_alloc) {
 			ctx->ack_sockets_alloc = MAX(16, ctx->ack_sockets_alloc * 2);
-			ctx->ack_sockets = (UTPSocket**)realloc(ctx->ack_sockets, ctx->ack_sockets_alloc * sizeof(ctx->ack_sockets[0]));
+			ctx->ack_sockets = (utp_socket**)realloc(ctx->ack_sockets, ctx->ack_sockets_alloc * sizeof(ctx->ack_sockets[0]));
 		}
-		ida = ctx->ack_sockets_count++;
-		ctx->ack_sockets[ida] = this;
+		conn->ida = ctx->ack_sockets_count++;
+		ctx->ack_sockets[conn->ida] = conn;
 	} else {
 		#if UTP_DEBUG_LOGGING
-		log(UTP_LOG_DEBUG, "schedule_ack: already in list");
+		utp_socket_log(conn, UTP_LOG_DEBUG, "schedule_ack: already in list");
 		#endif
 	}
 }
 
-void UTPSocket::send_data(byte* b, size_t length, bandwidth_type_t type, uint32 flags)
+void utp_socket_send_data(utp_socket *conn, byte* b, size_t length, bandwidth_type_t type, uint32 flags)
 {
 	// time stamp this packet with local time, the stamp goes into
 	// the header of every packet at the 8th byte for 8 bytes :
 	// two integers, check packet.h for more
-	uint64 time = utp_call_get_microseconds(ctx, this);
+	uint64 time = utp_call_get_microseconds(conn->ctx, conn);
 
 	PacketFormatV1* b1 = (PacketFormatV1*)b;
 	b1->tv_usec = htonl(time);
-	b1->reply_micro = htonl(reply_micro);
+	b1->reply_micro = htonl(conn->reply_micro);
 
-	last_sent_packet = ctx->current_ms;
+	conn->last_sent_packet = conn->ctx->current_ms;
 
 	#ifdef _DEBUG
 	_stats.nbytes_xmit += length;
 	++_stats.nxmit;
 	#endif
 
-	if (ctx->callbacks[UTP_ON_OVERHEAD_STATISTICS]) {
+	if (conn->ctx->callbacks[UTP_ON_OVERHEAD_STATISTICS]) {
 		size_t n;
 		if (type == payload_bandwidth) {
 			// if this packet carries payload, just
 			// count the header as overhead
 			type = header_overhead;
-			n = get_overhead();
+			n = utp_socket_get_overhead(conn);
 		} else {
-			n = length + get_udp_overhead();
+			n = length + utp_socket_get_udp_overhead(conn);
 		}
-		utp_call_on_overhead_statistics(ctx, this, true, n, type);
+		utp_call_on_overhead_statistics(conn->ctx, conn, true, n, type);
 	}
 #if UTP_DEBUG_LOGGING
 	int flags2 = b1->type();
@@ -769,29 +808,29 @@ void UTPSocket::send_data(byte* b, size_t length, bandwidth_type_t type, uint32 
 		addrfmt(addr, addrbuf), (uint)length, conn_id_send, time, reply_micro, flagnames[flags2],
 		seq_nr, ack_nr);
 #endif
-	send_to_addr(ctx, b, length, addr, flags);
-	removeSocketFromAckList(this);
+	send_to_addr(conn->ctx, b, length, &conn->addr, flags);
+	removeSocketFromAckList(conn);
 }
 
-void UTPSocket::send_ack(bool synack)
+void utp_socket_send_ack(utp_socket *conn, bool synack)
 {
 	PacketFormatAckV1 pfa;
 	memset(&pfa, 0, sizeof(pfa));
 
 	size_t len;
-	last_rcv_win = get_rcv_window();
-	pfa.pf.set_version(1);
-	pfa.pf.set_type(ST_STATE);
+	conn->last_rcv_win = utp_socket_get_rcv_window(conn);
+	packet_format_set_version(&pfa.pf, 1);
+	packet_format_set_type(&pfa.pf, ST_STATE);
 	pfa.pf.ext = 0;
-	pfa.pf.connid = htons(conn_id_send);
-	pfa.pf.ack_nr = htons(ack_nr);
-	pfa.pf.seq_nr = htons(seq_nr);
-	pfa.pf.windowsize = htonl(last_rcv_win);
+	pfa.pf.connid = htons(conn->conn_id_send);
+	pfa.pf.ack_nr = htons(conn->ack_nr);
+	pfa.pf.seq_nr = htons(conn->seq_nr);
+	pfa.pf.windowsize = htonl(conn->last_rcv_win);
 	len = sizeof(PacketFormatV1);
 
 	// we never need to send EACK for connections
 	// that are shutting down
-	if (reorder_count != 0 && !got_fin_reached) {
+	if (conn->reorder_count != 0 && !conn->got_fin_reached) {
 		// if reorder count > 0, send an EACK.
 		// reorder count should always be 0
 		// for synacks, so this should not be
@@ -805,11 +844,11 @@ void UTPSocket::send_ack(bool synack)
 		// reorder count should only be non-zero
 		// if the packet ack_nr + 1 has not yet
 		// been received
-		assert(inbuf.get(ack_nr + 1) == NULL);
-		size_t window = MIN(14+16, inbuf.size());
+		assert(circbuf_get(&conn->inbuf, conn->ack_nr + 1) == NULL);
+		size_t window = MIN(14+16, circbuf_size(&conn->inbuf));
 		// Generate bit mask of segments received.
 		for (size_t i = 0; i < window; i++) {
-			if (inbuf.get(ack_nr + i + 2) != NULL) {
+			if (circbuf_get(&conn->inbuf, conn->ack_nr + i + 2) != NULL) {
 				m |= 1 << i;
 
 				#if UTP_DEBUG_LOGGING
@@ -832,31 +871,31 @@ void UTPSocket::send_ack(bool synack)
 		#endif
 	}
 
-	send_data((byte*)&pfa, len, ack_overhead);
-	removeSocketFromAckList(this);
+	utp_socket_send_data(conn, (byte*)&pfa, len, ack_overhead, 0);
+	removeSocketFromAckList(conn);
 }
 
-void UTPSocket::send_keep_alive()
+void utp_socket_send_keep_alive(utp_socket *conn)
 {
-	ack_nr--;
+	conn->ack_nr--;
 
 	#if UTP_DEBUG_LOGGING
-	log(UTP_LOG_DEBUG, "Sending KeepAlive ACK %u [%u]", ack_nr, conn_id_send);
+	log(UTP_LOG_DEBUG, "Sending KeepAlive ACK %u [%u]", conn->ack_nr, conn->conn_id_send);
 	#endif
 
-	send_ack();
-	ack_nr++;
+	utp_socket_send_ack(conn, false);
+	conn->ack_nr++;
 }
 
-void UTPSocket::send_rst(utp_context *ctx,
-	const PackedSockAddr &addr, uint32 conn_id_send, uint16 ack_nr, uint16 seq_nr)
+void utp_socket_send_rst(utp_context *ctx,
+	const PackedSockAddr *addr, uint32 conn_id_send, uint16 ack_nr, uint16 seq_nr)
 {
 	PacketFormatV1 pf1;
 	memset(&pf1, 0, sizeof(pf1));
 
 	size_t len;
-	pf1.set_version(1);
-	pf1.set_type(ST_RESET);
+	packet_format_set_version(&pf1, 1);
+	packet_format_set_type(&pf1, ST_RESET);
 	pf1.ext = 0;
 	pf1.connid = htons(conn_id_send);
 	pf1.ack_nr = htons(ack_nr);
@@ -866,10 +905,10 @@ void UTPSocket::send_rst(utp_context *ctx,
 
 //	LOG_DEBUG("%s: Sending RST id:%u seq_nr:%u ack_nr:%u", addrfmt(addr, addrbuf), conn_id_send, seq_nr, ack_nr);
 //	LOG_DEBUG("send %s len:%u id:%u", addrfmt(addr, addrbuf), (uint)len, conn_id_send);
-	send_to_addr(ctx, (const byte*)&pf1, len, addr);
+	send_to_addr(ctx, (const byte*)&pf1, len, addr, 0);
 }
 
-void UTPSocket::send_packet(OutgoingPacket *pkt)
+void utp_socket_send_packet(utp_socket *conn, OutgoingPacket *pkt)
 {
 	// only count against the quota the first time we
 	// send the packet. Don't enforce quota when closing
@@ -877,27 +916,27 @@ void UTPSocket::send_packet(OutgoingPacket *pkt)
 	// at slow rates (max window < packet size)
 
 	//size_t max_send = MIN(max_window, MIN(opt_sndbuf, max_window_user));
-	time_t cur_time = utp_call_get_milliseconds(this->ctx, this);
+	time_t cur_time = utp_call_get_milliseconds(conn->ctx, conn);
 
 	if (pkt->transmissions == 0 || pkt->need_resend) {
-		cur_window += pkt->payload;
+		conn->cur_window += pkt->payload;
 	}
 
 	pkt->need_resend = false;
 
 	PacketFormatV1* p1 = (PacketFormatV1*)pkt->data;
-	p1->ack_nr = htons(ack_nr);
-	pkt->time_sent = utp_call_get_microseconds(this->ctx, this);
+	p1->ack_nr = htons(conn->ack_nr);
+	pkt->time_sent = utp_call_get_microseconds(conn->ctx, conn);
 
 	//socklen_t salen;
 	//SOCKADDR_STORAGE sa = addr.get_sockaddr_storage(&salen);
 	bool use_as_mtu_probe = false;
 
 	// TODO: this is subject to nasty wrapping issues! Below as well
- 	if (mtu_discover_time < (uint64)cur_time) {
+ 	if (conn->mtu_discover_time < (uint64)cur_time) {
 		// it's time to reset our MTU assupmtions
 		// and trigger a new search
-		mtu_reset();
+		utp_socket_mtu_reset(conn);
 	}
 
 	// don't use packets that are larger then mtu_ceiling
@@ -908,87 +947,87 @@ void UTPSocket::send_packet(OutgoingPacket *pkt)
 	// which is a magic number representing no-probe
 	// that why we don't send a probe for a packet with
 	// sequence number 0
- 	if (mtu_floor < mtu_ceiling
-		&& pkt->length > mtu_floor
-		&& pkt->length <= mtu_ceiling
-		&& mtu_probe_seq == 0
-		&& seq_nr != 1
+ 	if (conn->mtu_floor < conn->mtu_ceiling
+		&& pkt->length > conn->mtu_floor
+		&& pkt->length <= conn->mtu_ceiling
+		&& conn->mtu_probe_seq == 0
+		&& conn->seq_nr != 1
 		&& pkt->transmissions == 0) {
 
 		// we've already incremented seq_nr
 		// for this packet
- 		mtu_probe_seq = (seq_nr - 1) & ACK_NR_MASK;
- 		mtu_probe_size = pkt->length;
-		assert(pkt->length >= mtu_floor);
-		assert(pkt->length <= mtu_ceiling);
+ 		conn->mtu_probe_seq = (conn->seq_nr - 1) & ACK_NR_MASK;
+ 		conn->mtu_probe_size = pkt->length;
+		assert(pkt->length >= conn->mtu_floor);
+		assert(pkt->length <= conn->mtu_ceiling);
  		use_as_mtu_probe = true;
-		log(UTP_LOG_MTU, "MTU [PROBE] floor:%d ceiling:%d current:%d"
-			, mtu_floor, mtu_ceiling, mtu_probe_size);
+		utp_socket_log(conn, UTP_LOG_MTU, "MTU [PROBE] floor:%d ceiling:%d current:%d"
+			, conn->mtu_floor, conn->mtu_ceiling, conn->mtu_probe_size);
  	}
 
 	pkt->transmissions++;
-	send_data((byte*)pkt->data, pkt->length,
-		(state == CS_SYN_SENT) ? connect_overhead
+	utp_socket_send_data(conn, (byte*)pkt->data, pkt->length,
+		(conn->state == CS_SYN_SENT) ? connect_overhead
 		: (pkt->transmissions == 1) ? payload_bandwidth
 		: retransmit_overhead, use_as_mtu_probe ? UTP_UDP_DONTFRAG : 0);
 }
 
-bool UTPSocket::is_full(int bytes)
+bool utp_socket_is_full(utp_socket *conn, int bytes)
 {
-	size_t packet_size = get_packet_size();
+	size_t packet_size = utp_socket_get_packet_size(conn);
 	if (bytes < 0) bytes = packet_size;
 	else if (bytes > (int)packet_size) bytes = (int)packet_size;
-	size_t max_send = opt_sndbuf;
-	if (max_window < max_send)
-		max_send = max_window;
-	if (max_window_user < max_send)
-		max_send = max_window_user;
+	size_t max_send = conn->opt_sndbuf;
+	if (conn->max_window < max_send)
+		max_send = conn->max_window;
+	if (conn->max_window_user < max_send)
+		max_send = conn->max_window_user;
 
 	// subtract one to save space for the FIN packet
-	if (cur_window_packets >= OUTGOING_BUFFER_MAX_SIZE - 1) {
+	if (conn->cur_window_packets >= OUTGOING_BUFFER_MAX_SIZE - 1) {
 
 		#if UTP_DEBUG_LOGGING
 		log(UTP_LOG_DEBUG, "is_full:false cur_window_packets:%d MAX:%d", cur_window_packets, OUTGOING_BUFFER_MAX_SIZE - 1);
 		#endif
 
-		last_maxed_out_window = ctx->current_ms;
+		conn->last_maxed_out_window = conn->ctx->current_ms;
 		return true;
 	}
 
 	#if UTP_DEBUG_LOGGING
 	log(UTP_LOG_DEBUG, "is_full:%s. cur_window:%u pkt:%u max:%u cur_window_packets:%u max_window:%u"
-		, (cur_window + bytes > max_send) ? "true" : "false"
-		, cur_window, bytes, max_send, cur_window_packets
+		, (conn->cur_window + bytes > max_send) ? "true" : "false"
+		, conn->cur_window, bytes, max_send, cur_window_packets
 		, max_window);
 	#endif
 
-	if (cur_window + bytes > max_send) {
-		last_maxed_out_window = ctx->current_ms;
+	if (conn->cur_window + bytes > max_send) {
+		conn->last_maxed_out_window = conn->ctx->current_ms;
 		return true;
 	}
 	return false;
 }
 
-bool UTPSocket::flush_packets()
+bool utp_socket_flush_packets(utp_socket *conn)
 {
-	size_t packet_size = get_packet_size();
+	size_t packet_size = utp_socket_get_packet_size(conn);
 
 	// send packets that are waiting on the pacer to be sent
 	// i has to be an unsigned 16 bit counter to wrap correctly
 	// signed types are not guaranteed to wrap the way you expect
-	for (uint16 i = seq_nr - cur_window_packets; i != seq_nr; ++i) {
-		OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(i);
+	for (uint16 i = conn->seq_nr - conn->cur_window_packets; i != conn->seq_nr; ++i) {
+		OutgoingPacket *pkt = circbuf_get(&conn->outbuf, i);
 		if (pkt == 0 || (pkt->transmissions > 0 && pkt->need_resend == false)) continue;
 		// have we run out of quota?
-		if (is_full()) return true;
+		if (utp_socket_is_full(conn, -1)) return true;
 
 		// Nagle check
 		// don't send the last packet if we have one packet in-flight
 		// and the current packet is still smaller than packet_size.
-		if (i != ((seq_nr - 1) & ACK_NR_MASK) ||
-			cur_window_packets == 1 ||
+		if (i != ((conn->seq_nr - 1) & ACK_NR_MASK) ||
+			conn->cur_window_packets == 1 ||
 			pkt->payload >= packet_size) {
-			send_packet(pkt);
+			utp_socket_send_packet(conn, pkt);
 		}
 	}
 	return false;
@@ -998,29 +1037,29 @@ bool UTPSocket::flush_packets()
 // @flags: either ST_DATA, or ST_FIN
 // @iovec: base address of iovec array
 // @num_iovecs: number of iovecs in array
-void UTPSocket::write_outgoing_packet(size_t payload, uint flags, struct utp_iovec *iovec, size_t num_iovecs)
+void utp_socket_write_outgoing_packet(utp_socket *conn, size_t payload, uint flags, struct utp_iovec *iovec, size_t num_iovecs)
 {
 	// Setup initial timeout timer
-	if (cur_window_packets == 0) {
-		retransmit_timeout = rto;
-		rto_timeout = ctx->current_ms + retransmit_timeout;
-		assert(cur_window == 0);
+	if (conn->cur_window_packets == 0) {
+		conn->retransmit_timeout = conn->rto;
+		conn->rto_timeout = conn->ctx->current_ms + conn->retransmit_timeout;
+		assert(conn->cur_window == 0);
 	}
 
-	size_t packet_size = get_packet_size();
+	size_t packet_size = utp_socket_get_packet_size(conn);
 	do {
-		assert(cur_window_packets < OUTGOING_BUFFER_MAX_SIZE);
+		assert(conn->cur_window_packets < OUTGOING_BUFFER_MAX_SIZE);
 		assert(flags == ST_DATA || flags == ST_FIN);
 
 		size_t added = 0;
 
 		OutgoingPacket *pkt = NULL;
 
-		if (cur_window_packets > 0) {
-			pkt = (OutgoingPacket*)outbuf.get(seq_nr - 1);
+		if (conn->cur_window_packets > 0) {
+			pkt = circbuf_get(&conn->outbuf, conn->seq_nr - 1);
 		}
 
-		const size_t header_size = get_header_size();
+		const size_t header_size = sizeof(PacketFormatV1);
 		bool append = true;
 
 		// if there's any room left in the last packet in the window
@@ -1028,19 +1067,14 @@ void UTPSocket::write_outgoing_packet(size_t payload, uint flags, struct utp_iov
 		if (payload && pkt && !pkt->transmissions && pkt->payload < packet_size) {
 			// Use the previous unsent packet
 			added = MIN(payload + pkt->payload, MAX(packet_size, pkt->payload)) - pkt->payload;
-			pkt = (OutgoingPacket*)realloc(pkt,
-										   (sizeof(OutgoingPacket) - 1) +
-										   header_size +
-										   pkt->payload + added);
-			outbuf.put(seq_nr - 1, pkt);
+			pkt = realloc(pkt, (sizeof(OutgoingPacket) - 1) + header_size + pkt->payload + added);
+			circbuf_put(&conn->outbuf, conn->seq_nr - 1, pkt);
 			append = false;
 			assert(!pkt->need_resend);
 		} else {
 			// Create the packet to send.
 			added = payload;
-			pkt = (OutgoingPacket*)malloc((sizeof(OutgoingPacket) - 1) +
-										  header_size +
-										  added);
+			pkt = malloc((sizeof(OutgoingPacket) - 1) + header_size + added);
 			pkt->payload = 0;
 			pkt->transmissions = 0;
 			pkt->need_resend = false;
@@ -1081,30 +1115,30 @@ void UTPSocket::write_outgoing_packet(size_t payload, uint flags, struct utp_iov
 		pkt->payload += added;
 		pkt->length = header_size + pkt->payload;
 
-		last_rcv_win = get_rcv_window();
+		conn->last_rcv_win = utp_socket_get_rcv_window(conn);
 
 		PacketFormatV1* p1 = (PacketFormatV1*)pkt->data;
-		p1->set_version(1);
-		p1->set_type(flags);
+		packet_format_set_version(p1, 1);
+		packet_format_set_type(p1, flags);
 		p1->ext = 0;
-		p1->connid = htons(conn_id_send);
-		p1->windowsize = htonl(last_rcv_win);
-		p1->ack_nr = htons(ack_nr);
+		p1->connid = htons(conn->conn_id_send);
+		p1->windowsize = htonl(conn->last_rcv_win);
+		p1->ack_nr = htons(conn->ack_nr);
 
 		if (append) {
 			// Remember the message in the outgoing queue.
-			outbuf.ensure_size(seq_nr, cur_window_packets);
-			outbuf.put(seq_nr, pkt);
-			p1->seq_nr = htons(seq_nr);
-			seq_nr++;
-			cur_window_packets++;
+			circbuf_ensure_size(&conn->outbuf, conn->seq_nr, conn->cur_window_packets);
+			circbuf_put(&conn->outbuf, conn->seq_nr, pkt);
+			p1->seq_nr = htons(conn->seq_nr);
+			conn->seq_nr++;
+			conn->cur_window_packets++;
 		}
 
 		payload -= added;
 
 	} while (payload);
 
-	flush_packets();
+	utp_socket_flush_packets(conn);
 }
 
 #ifdef _DEBUG
@@ -1124,14 +1158,14 @@ void UTPSocket::check_invariant()
 }
 #endif
 
-void UTPSocket::check_timeouts()
+void utp_socket_check_timeouts(utp_socket *conn)
 {
 	#ifdef _DEBUG
 	check_invariant();
 	#endif
 
 	// this invariant should always be true
-	assert(cur_window_packets == 0 || outbuf.get(seq_nr - cur_window_packets));
+	assert(conn->cur_window_packets == 0 || circbuf_get(&conn->outbuf, conn->seq_nr - conn->cur_window_packets));
 
 	#if UTP_DEBUG_LOGGING
 	log(UTP_LOG_DEBUG, "CheckTimeouts timeout:%d max_window:%u cur_window:%u "
@@ -1140,41 +1174,41 @@ void UTPSocket::check_timeouts()
 			 statenames[state], cur_window_packets);
 	#endif
 
-	if (state != CS_DESTROY) flush_packets();
+	if (conn->state != CS_DESTROY) utp_socket_flush_packets(conn);
 
-	switch (state) {
+	switch (conn->state) {
 	case CS_SYN_SENT:
 	case CS_SYN_RECV:
 	case CS_CONNECTED_FULL:
 	case CS_CONNECTED: {
 
 		// Reset max window...
-		if ((int)(ctx->current_ms - zerowindow_time) >= 0 && max_window_user == 0) {
-			max_window_user = PACKET_SIZE;
+		if ((int)(conn->ctx->current_ms - conn->zerowindow_time) >= 0 && conn->max_window_user == 0) {
+			conn->max_window_user = PACKET_SIZE;
 		}
 
-		if ((int)(ctx->current_ms - rto_timeout) >= 0
-			&& rto_timeout > 0) {
+		if ((int)(conn->ctx->current_ms - conn->rto_timeout) >= 0
+			&& conn->rto_timeout > 0) {
 
 			bool ignore_loss = false;
 
-			if (cur_window_packets == 1
-				&& ((seq_nr - 1) & ACK_NR_MASK) == mtu_probe_seq
-				&& mtu_probe_seq != 0) {
+			if (conn->cur_window_packets == 1
+				&& ((conn->seq_nr - 1) & ACK_NR_MASK) == conn->mtu_probe_seq
+				&& conn->mtu_probe_seq != 0) {
 				// we only had  a single outstanding packet that timed out, and it was the probe
-				mtu_ceiling = mtu_probe_size - 1;
-				mtu_search_update();
+				conn->mtu_ceiling = conn->mtu_probe_size - 1;
+				utp_socket_mtu_search_update(conn);
 				// this packet was most likely dropped because the packet size being
 				// too big and not because congestion. To accelerate the binary search for
 				// the MTU, resend immediately and don't reset the window size
 				ignore_loss = true;
-				log(UTP_LOG_MTU, "MTU [PROBE-TIMEOUT] floor:%d ceiling:%d current:%d"
-					, mtu_floor, mtu_ceiling, mtu_last);
+				utp_socket_log(conn, UTP_LOG_MTU, "MTU [PROBE-TIMEOUT] floor:%d ceiling:%d current:%d"
+					, conn->mtu_floor, conn->mtu_ceiling, conn->mtu_last);
 			}
 			// we dropepd the probe, clear these fields to
 			// allow us to send a new one
-			mtu_probe_seq = mtu_probe_size = 0;
-			log(UTP_LOG_MTU, "MTU [TIMEOUT]");
+			conn->mtu_probe_seq = conn->mtu_probe_size = 0;
+			utp_socket_log(conn, UTP_LOG_MTU, "MTU [TIMEOUT]");
 
 			/*
 			OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(seq_nr - cur_window_packets);
@@ -1185,101 +1219,101 @@ void UTPSocket::check_timeouts()
 			*/
 
 			// Increase RTO
-			const uint new_timeout = ignore_loss ? retransmit_timeout : retransmit_timeout * 2;
+			const uint new_timeout = ignore_loss ? conn->retransmit_timeout : conn->retransmit_timeout * 2;
 
 			// They initiated the connection but failed to respond before the rto. 
 			// A malicious client can also spoof the destination address of a ST_SYN bringing us to this state.
 			// Kill the connection and do not notify the upper layer
-			if (state == CS_SYN_RECV) {
-				state = CS_DESTROY;
-				utp_call_on_error(ctx, this, UTP_ETIMEDOUT);
+			if (conn->state == CS_SYN_RECV) {
+				conn->state = CS_DESTROY;
+				utp_call_on_error(conn->ctx, conn, UTP_ETIMEDOUT);
 				return;
 			}
 
 			// We initiated the connection but the other side failed to respond before the rto
-			if (retransmit_count >= 4 || (state == CS_SYN_SENT && retransmit_count >= 2)) {
+			if (conn->retransmit_count >= 4 || (conn->state == CS_SYN_SENT && conn->retransmit_count >= 2)) {
 				// 4 consecutive transmissions have timed out. Kill it. If we
 				// haven't even connected yet, give up after only 2 consecutive
 				// failed transmissions.
-				if (close_requested)
-					state = CS_DESTROY;
+				if (conn->close_requested)
+					conn->state = CS_DESTROY;
 				else
-					state = CS_RESET;
-				utp_call_on_error(ctx, this, UTP_ETIMEDOUT);
+					conn->state = CS_RESET;
+				utp_call_on_error(conn->ctx, conn, UTP_ETIMEDOUT);
 				return;
 			}
 
-			retransmit_timeout = new_timeout;
-			rto_timeout = ctx->current_ms + new_timeout;
+			conn->retransmit_timeout = new_timeout;
+			conn->rto_timeout = conn->ctx->current_ms + new_timeout;
 
 			if (!ignore_loss) {
 				// On Timeout
-				duplicate_ack = 0;
+				conn->duplicate_ack = 0;
 
-				int packet_size = get_packet_size();
+				int packet_size = utp_socket_get_packet_size(conn);
 
-				if ((cur_window_packets == 0) && ((int)max_window > packet_size)) {
+				if ((conn->cur_window_packets == 0) && ((int)conn->max_window > packet_size)) {
 					// we don't have any packets in-flight, even though
 					// we could. This implies that the connection is just
 					// idling. No need to be aggressive about resetting the
 					// congestion window. Just let it decay by a 3:rd.
 					// don't set it any lower than the packet size though
-					max_window = MAX(max_window * 2 / 3, size_t(packet_size));
+					conn->max_window = MAX(conn->max_window * 2 / 3, (size_t)packet_size);
 				} else {
 					// our delay was so high that our congestion window
 					// was shrunk below one packet, preventing us from
 					// sending anything for one time-out period. Now, reset
 					// the congestion window to fit one packet, to start over
 					// again
-					max_window = packet_size;
-					slow_start = true;
+					conn->max_window = packet_size;
+					conn->slow_start = true;
 				}
 			}
 
 			// every packet should be considered lost
-			for (int i = 0; i < cur_window_packets; ++i) {
-				OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(seq_nr - i - 1);
+			for (int i = 0; i < conn->cur_window_packets; ++i) {
+				OutgoingPacket *pkt = circbuf_get(&conn->outbuf, conn->seq_nr - i - 1);
 				if (pkt == 0 || pkt->transmissions == 0 || pkt->need_resend) continue;
 				pkt->need_resend = true;
-				assert(cur_window >= pkt->payload);
-				cur_window -= pkt->payload;
+				assert(conn->cur_window >= pkt->payload);
+				conn->cur_window -= pkt->payload;
 			}
 
-			if (cur_window_packets > 0) {
-				retransmit_count++;
+			if (conn->cur_window_packets > 0) {
+				conn->retransmit_count++;
 				// used in parse_log.py
-				log(UTP_LOG_NORMAL, "Packet timeout. Resend. seq_nr:%u. timeout:%u "
+				utp_socket_log(conn, UTP_LOG_NORMAL, "Packet timeout. Resend. seq_nr:%u. timeout:%u "
 					"max_window:%u cur_window_packets:%d"
-					, seq_nr - cur_window_packets, retransmit_timeout
-					, (uint)max_window, int(cur_window_packets));
+					, conn->seq_nr - conn->cur_window_packets, conn->retransmit_timeout
+					, (uint)conn->max_window, (int)conn->cur_window_packets);
 
-				fast_timeout = true;
-				timeout_seq_nr = seq_nr;
+				conn->fast_timeout = true;
+				conn->timeout_seq_nr = conn->seq_nr;
 
-				OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(seq_nr - cur_window_packets);
+				OutgoingPacket *pkt = circbuf_get(&conn->outbuf, conn->seq_nr - conn->cur_window_packets);
 				assert(pkt);
 
 				// Re-send the packet.
-				send_packet(pkt);
+				utp_socket_send_packet(conn, pkt);
 			}
 		}
 
 		// Mark the socket as writable. If the cwnd has grown, or if the number of
 		// bytes in-flight is lower than cwnd, we need to make the socket writable again
 		// in case it isn't
-		if (state == CS_CONNECTED_FULL && !is_full()) {
-			state = CS_CONNECTED;
+		if (conn->state == CS_CONNECTED_FULL && !utp_socket_is_full(conn, -1)) {
+			conn->state = CS_CONNECTED;
 
 			#if UTP_DEBUG_LOGGING
 			log(UTP_LOG_DEBUG, "Socket writable. max_window:%u cur_window:%u packet_size:%u",
 				(uint)max_window, (uint)cur_window, (uint)get_packet_size());
 			#endif
-			utp_call_on_state_change(this->ctx, this, UTP_STATE_WRITABLE);
+			utp_call_on_state_change(conn->ctx, conn, UTP_STATE_WRITABLE);
 		}
 
-		if (state >= CS_CONNECTED && !fin_sent) {
-			if ((int)(ctx->current_ms - last_sent_packet) >= KEEPALIVE_INTERVAL) {
-				send_keep_alive();
+		if (conn->state >= CS_CONNECTED && !conn->fin_sent) {
+			if ((int)(conn->ctx->current_ms - conn->last_sent_packet) >= KEEPALIVE_INTERVAL) {
+				utp_socket_send_keep_alive(conn);
 			}
 		}
 		break;
@@ -1295,49 +1329,49 @@ void UTPSocket::check_timeouts()
 }
 
 // this should be called every time we change mtu_floor or mtu_ceiling
-void UTPSocket::mtu_search_update()
+void utp_socket_mtu_search_update(utp_socket *conn)
 {
-	assert(mtu_floor <= mtu_ceiling);
+	assert(conn->mtu_floor <= conn->mtu_ceiling);
 
 	// binary search
-	mtu_last = (mtu_floor + mtu_ceiling) / 2;
+	conn->mtu_last = (conn->mtu_floor + conn->mtu_ceiling) / 2;
 
 	// enable a new probe to be sent
-	mtu_probe_seq = mtu_probe_size = 0;
+	conn->mtu_probe_seq = conn->mtu_probe_size = 0;
 
 	// if the floor and ceiling are close enough, consider the
 	// MTU binary search complete. We set the current value
 	// to floor since that's the only size we know can go through
 	// also set the ceiling to floor to terminate the searching
-	if (mtu_ceiling - mtu_floor <= 16) {
-		mtu_last = mtu_floor;
-		log(UTP_LOG_MTU, "MTU [DONE] floor:%d ceiling:%d current:%d"
-			, mtu_floor, mtu_ceiling, mtu_last);
-		mtu_ceiling = mtu_floor;
-		assert(mtu_floor <= mtu_ceiling);
+	if (conn->mtu_ceiling - conn->mtu_floor <= 16) {
+		conn->mtu_last = conn->mtu_floor;
+		utp_socket_log(conn, UTP_LOG_MTU, "MTU [DONE] floor:%d ceiling:%d current:%d"
+			, conn->mtu_floor, conn->mtu_ceiling, conn->mtu_last);
+		conn->mtu_ceiling = conn->mtu_floor;
+		assert(conn->mtu_floor <= conn->mtu_ceiling);
 		// Do another search in 30 minutes
-		mtu_discover_time = utp_call_get_milliseconds(this->ctx, this) + 30 * 60 * 1000;
+		conn->mtu_discover_time = utp_call_get_milliseconds(conn->ctx, conn) + 30 * 60 * 1000;
 	}
 }
 
-void UTPSocket::mtu_reset()
+void utp_socket_mtu_reset(utp_socket *conn)
 {
-	mtu_ceiling = get_udp_mtu();
+	conn->mtu_ceiling = utp_socket_get_udp_mtu(conn);
 	// Less would not pass TCP...
-	mtu_floor = 576;
-	log(UTP_LOG_MTU, "MTU [RESET] floor:%d ceiling:%d current:%d"
-		, mtu_floor, mtu_ceiling, mtu_last);
-	assert(mtu_floor <= mtu_ceiling);
-	mtu_discover_time = utp_call_get_milliseconds(this->ctx, this) + 30 * 60 * 1000;
+	conn->mtu_floor = 576;
+	utp_socket_log(conn, UTP_LOG_MTU, "MTU [RESET] floor:%d ceiling:%d current:%d"
+		, conn->mtu_floor, conn->mtu_ceiling, conn->mtu_last);
+	assert(conn->mtu_floor <= conn->mtu_ceiling);
+	conn->mtu_discover_time = utp_call_get_milliseconds(conn->ctx, conn) + 30 * 60 * 1000;
 }
 
 // returns:
 // 0: the packet was acked.
 // 1: it means that the packet had already been acked
 // 2: the packet has not been sent yet
-int UTPSocket::ack_packet(uint16 seq)
+int utp_socket_ack_packet(utp_socket *conn, uint16 seq)
 {
-	OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(seq);
+	OutgoingPacket *pkt = circbuf_get(&conn->outbuf, seq);
 
 	// the packet has already been acked (or not sent)
 	if (pkt == NULL) {
@@ -1365,69 +1399,69 @@ int UTPSocket::ack_packet(uint16 seq)
 		seq, (uint)pkt->payload, pkt->need_resend);
 	#endif
 
-	outbuf.put(seq, NULL);
+	circbuf_put(&conn->outbuf, seq, NULL);
 
 	// if we never re-sent the packet, update the RTT estimate
 	if (pkt->transmissions == 1) {
 		// Estimate the round trip time.
-		const uint32 ertt = (uint32)((utp_call_get_microseconds(this->ctx, this) - pkt->time_sent) / 1000);
-		if (rtt == 0) {
+		const uint32 ertt = (utp_call_get_microseconds(conn->ctx, conn) - pkt->time_sent) / 1000;
+		if (conn->rtt == 0) {
 			// First round trip time sample
-			rtt = ertt;
-			rtt_var = ertt / 2;
+			conn->rtt = ertt;
+			conn->rtt_var = ertt / 2;
 			// sanity check. rtt should never be more than 6 seconds
 //			assert(rtt < 6000);
 		} else {
 			// Compute new round trip times
-			const int delta = (int)rtt - ertt;
-			rtt_var = rtt_var + (int)(abs(delta) - rtt_var) / 4;
-			rtt = rtt - rtt/8 + ertt/8;
+			const int delta = (int)conn->rtt - ertt;
+			conn->rtt_var = conn->rtt_var + (int)(abs(delta) - conn->rtt_var) / 4;
+			conn->rtt = conn->rtt - conn->rtt/8 + ertt/8;
 			// sanity check. rtt should never be more than 6 seconds
 //			assert(rtt < 6000);
-			rtt_hist.add_sample(ertt, ctx->current_ms);
+			delay_hist_add_sample(&conn->rtt_hist, ertt, conn->ctx->current_ms);
 		}
-		rto = MAX(rtt + rtt_var * 4, 1000);
+		conn->rto = MAX(conn->rtt + conn->rtt_var * 4, 1000);
 
 		#if UTP_DEBUG_LOGGING
 		log(UTP_LOG_DEBUG, "rtt:%u avg:%u var:%u rto:%u",
-			ertt, rtt, rtt_var, rto);
+			ertt, conn->rtt, conn->rtt_var, conn->rto);
 		#endif
 
 	}
-	retransmit_timeout = rto;
-	rto_timeout = ctx->current_ms + rto;
+	conn->retransmit_timeout = conn->rto;
+	conn->rto_timeout = conn->ctx->current_ms + conn->rto;
 	// if need_resend is set, this packet has already
 	// been considered timed-out, and is not included in
 	// the cur_window anymore
 	if (!pkt->need_resend) {
-		assert(cur_window >= pkt->payload);
-		cur_window -= pkt->payload;
+		assert(conn->cur_window >= pkt->payload);
+		conn->cur_window -= pkt->payload;
 	}
 	free(pkt);
-	retransmit_count = 0;
+	conn->retransmit_count = 0;
 	return 0;
 }
 
 // count the number of bytes that were acked by the EACK header
-size_t UTPSocket::selective_ack_bytes(uint base, const byte* mask, byte len, int64& min_rtt)
+size_t utp_socket_selective_ack_bytes(utp_socket *conn, uint base, const byte* mask, byte len, int64 *min_rtt)
 {
-	if (cur_window_packets == 0) return 0;
+	if (conn->cur_window_packets == 0) return 0;
 
 	size_t acked_bytes = 0;
 	int bits = len * 8;
-	uint64 now = utp_call_get_microseconds(this->ctx, this);
+	uint64 now = utp_call_get_microseconds(conn->ctx, conn);
 
 	do {
 		uint v = base + bits;
 
 		// ignore bits that haven't been sent yet
 		// see comment in UTPSocket::selective_ack
-		if (((seq_nr - v - 1) & ACK_NR_MASK) >= (uint16)(cur_window_packets - 1))
+		if (((conn->seq_nr - v - 1) & ACK_NR_MASK) >= (uint16)(conn->cur_window_packets - 1))
 			continue;
 
 		// ignore bits that represents packets we haven't sent yet
 		// or packets that have already been acked
-		OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(v);
+		OutgoingPacket *pkt = circbuf_get(&conn->outbuf, v);
 		if (!pkt || pkt->transmissions == 0)
 			continue;
 
@@ -1436,9 +1470,9 @@ size_t UTPSocket::selective_ack_bytes(uint base, const byte* mask, byte len, int
 			assert((int)(pkt->payload) >= 0);
 			acked_bytes += pkt->payload;
 			if (pkt->time_sent < now)
-				min_rtt = MIN(min_rtt, now - pkt->time_sent);
+				*min_rtt = MIN(*min_rtt, now - pkt->time_sent);
 			else
-				min_rtt = MIN(min_rtt, 50000);
+				*min_rtt = MIN(*min_rtt, 50000);
 			continue;
 		}
 	} while (--bits >= -1);
@@ -1447,9 +1481,9 @@ size_t UTPSocket::selective_ack_bytes(uint base, const byte* mask, byte len, int
 
 enum { MAX_EACK = 128 };
 
-void UTPSocket::selective_ack(uint base, const byte *mask, byte len)
+void utp_socket_selective_ack(utp_socket *conn, uint base, const byte *mask, byte len)
 {
-	if (cur_window_packets == 0) return;
+	if (conn->cur_window_packets == 0) return;
 
 	// the range is inclusive [0, 31] bits
 	int bits = len * 8 - 1;
@@ -1508,7 +1542,7 @@ void UTPSocket::selective_ack(uint base, const byte *mask, byte len)
 		//              |              |
 		//        (seq_nr-wnd)         seq_nr
 
-		if (((seq_nr - v - 1) & ACK_NR_MASK) >= (uint16)(cur_window_packets - 1))
+		if (((conn->seq_nr - v - 1) & ACK_NR_MASK) >= (uint16)(conn->cur_window_packets - 1))
 			continue;
 
 		// this counts as a duplicate ack, even though we might have
@@ -1521,7 +1555,7 @@ void UTPSocket::selective_ack(uint base, const byte *mask, byte len)
 
 		// ignore bits that represents packets we haven't sent yet
 		// or packets that have already been acked
-		OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(v);
+		OutgoingPacket *pkt = circbuf_get(&conn->outbuf, v);
 		if (!pkt || pkt->transmissions == 0) {
 
 			#if UTP_DEBUG_LOGGING
@@ -1534,8 +1568,8 @@ void UTPSocket::selective_ack(uint base, const byte *mask, byte len)
 		// Count the number of segments that were successfully received past it.
 		if (bit_set) {
 			// the selective ack should never ACK the packet we're waiting for to decrement cur_window_packets
-			assert((v & outbuf.mask) != ((seq_nr - cur_window_packets) & outbuf.mask));
-			ack_packet(v);
+			assert((v & conn->outbuf.mask) != ((conn->seq_nr - conn->cur_window_packets) & conn->outbuf.mask));
+			utp_socket_ack_packet(conn, v);
 			continue;
 		}
 
@@ -1543,7 +1577,7 @@ void UTPSocket::selective_ack(uint base, const byte *mask, byte len)
 		// if count is less than our re-send limit, we haven't seen enough
 		// acked packets in front of this one to warrant a re-send.
 		// if count == 0, we're still going through the tail of zeroes
-		if (((v - fast_resend_seq_nr) & ACK_NR_MASK) <= OUTGOING_BUFFER_MAX_SIZE &&
+		if (((v - conn->fast_resend_seq_nr) & ACK_NR_MASK) <= OUTGOING_BUFFER_MAX_SIZE &&
 			count >= DUPLICATE_ACKS_BEFORE_RESEND) {
 			// resends is a stack, and we're mostly interested in the top of it
 			// if we're full, just throw away the lower half
@@ -1566,7 +1600,7 @@ void UTPSocket::selective_ack(uint base, const byte *mask, byte len)
 		}
 	} while (--bits >= -1);
 
-	if (((base - 1 - fast_resend_seq_nr) & ACK_NR_MASK) <= OUTGOING_BUFFER_MAX_SIZE &&
+	if (((base - 1 - conn->fast_resend_seq_nr) & ACK_NR_MASK) <= OUTGOING_BUFFER_MAX_SIZE &&
 		count >= DUPLICATE_ACKS_BEFORE_RESEND) {
 		// if we get enough duplicate acks to start
 		// resending, the first packet we should resend
@@ -1591,7 +1625,7 @@ void UTPSocket::selective_ack(uint base, const byte *mask, byte len)
 		// don't consider the tail of 0:es to be lost packets
 		// only unacked packets with acked packets after should
 		// be considered lost
-		OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(v);
+		OutgoingPacket *pkt = circbuf_get(&conn->outbuf, v);
 
 		// this may be an old (re-ordered) packet, and some of the
 		// packets in here may have been acked already. In which
@@ -1599,7 +1633,7 @@ void UTPSocket::selective_ack(uint base, const byte *mask, byte len)
 		if (!pkt) continue;
 
 		// used in parse_log.py
-		log(UTP_LOG_NORMAL, "Packet %u lost. Resending", v);
+		utp_socket_log(conn, UTP_LOG_NORMAL, "Packet %u lost. Resending", v);
 
 		// On Loss
 		back_off = true;
@@ -1608,30 +1642,30 @@ void UTPSocket::selective_ack(uint base, const byte *mask, byte len)
 		++_stats.rexmit;
 		#endif
 
-		send_packet(pkt);
-		fast_resend_seq_nr = (v + 1) & ACK_NR_MASK;
+		utp_socket_send_packet(conn, pkt);
+		conn->fast_resend_seq_nr = (v + 1) & ACK_NR_MASK;
 
 		// Re-send max 4 packets.
 		if (++i >= 4) break;
 	}
 
 	if (back_off)
-		maybe_decay_win(ctx->current_ms);
+		utp_socket_maybe_decay_win(conn, conn->ctx->current_ms);
 
-	duplicate_ack = count;
+	conn->duplicate_ack = count;
 }
 
-void UTPSocket::apply_ccontrol(size_t bytes_acked, uint32 actual_delay, int64 min_rtt)
+void utp_socket_apply_ccontrol(utp_socket *conn, size_t bytes_acked, uint32 actual_delay, int64 min_rtt)
 {
 	// the delay can never be greater than the rtt. The min_rtt
 	// variable is the RTT in microseconds
 
 	assert(min_rtt >= 0);
-	int32 our_delay = MIN(our_hist.get_value(), uint32(min_rtt));
+	int32 our_delay = MIN(delay_hist_get_value(&conn->our_hist), (uint32)min_rtt);
 	assert(our_delay != INT_MAX);
 	assert(our_delay >= 0);
 
-	utp_call_on_delay_sample(this->ctx, this, our_delay / 1000);
+	utp_call_on_delay_sample(conn->ctx, conn, our_delay / 1000);
 
 	// This test the connection under heavy load from foreground
 	// traffic. Pretend that our delays are very high to force the
@@ -1639,7 +1673,7 @@ void UTPSocket::apply_ccontrol(size_t bytes_acked, uint32 actual_delay, int64 mi
 	//our_delay *= 4;
 
 	// target is microseconds
-	int target = target_delay;
+	int target = conn->target_delay;
 	if (target <= 0) target = 100000;
 
 	// this is here to compensate for very large clock drift that affects
@@ -1653,8 +1687,8 @@ void UTPSocket::apply_ccontrol(size_t bytes_acked, uint32 actual_delay, int64 mi
 	// if clock_drift < -200000 start applying a penalty delay proportional
 	// to how far beoynd -200000 the clock drift is
 	int32 penalty = 0;
-	if (clock_drift < -200000) {
-		penalty = (-clock_drift - 200000) / 7;
+	if (conn->clock_drift < -200000) {
+		penalty = (-conn->clock_drift - 200000) / 7;
 		our_delay += penalty;
 	}
 
@@ -1675,7 +1709,7 @@ void UTPSocket::apply_ccontrol(size_t bytes_acked, uint32 actual_delay, int64 mi
 	// window, in order to keep the gain within sane boundries.
 
 	assert(bytes_acked > 0);
-	double window_factor = (double)MIN(bytes_acked, max_window) / (double)MAX(max_window, bytes_acked);
+	double window_factor = (double)MIN(bytes_acked, conn->max_window) / (double)MAX(conn->max_window, bytes_acked);
 
 	double delay_factor = off_target / target;
 	double scaled_gain = MAX_CWND_INCREASE_BYTES_PER_RTT * window_factor * delay_factor;
@@ -1685,9 +1719,9 @@ void UTPSocket::apply_ccontrol(size_t bytes_acked, uint32 actual_delay, int64 mi
 	// to the number of bytes that were acked, so that once one window has been acked (one rtt)
 	// the increase limit is not exceeded
 	// the +1. is to allow for floating point imprecision
-	assert(scaled_gain <= 1. + MAX_CWND_INCREASE_BYTES_PER_RTT * (double)MIN(bytes_acked, max_window) / (double)MAX(max_window, bytes_acked));
+	assert(scaled_gain <= 1. + MAX_CWND_INCREASE_BYTES_PER_RTT * (double)MIN(bytes_acked, conn->max_window) / (double)MAX(conn->max_window, bytes_acked));
 
-	if (scaled_gain > 0 && ctx->current_ms - last_maxed_out_window > 1000) {
+	if (scaled_gain > 0 && conn->ctx->current_ms - conn->last_maxed_out_window > 1000) {
 		// if it was more than 1 second since we tried to send a packet
 		// and stopped because we hit the max window, we're most likely rate
 		// limited (which prevents us from ever hitting the window size)
@@ -1695,51 +1729,51 @@ void UTPSocket::apply_ccontrol(size_t bytes_acked, uint32 actual_delay, int64 mi
 		scaled_gain = 0;
 	}
 
-	size_t ledbat_cwnd = (max_window + scaled_gain < MIN_WINDOW_SIZE) ? MIN_WINDOW_SIZE : (size_t)(max_window + scaled_gain);
+	size_t ledbat_cwnd = (conn->max_window + scaled_gain < MIN_WINDOW_SIZE) ? MIN_WINDOW_SIZE : (size_t)(conn->max_window + scaled_gain);
 
-	if (slow_start) {
-		size_t ss_cwnd = (size_t)(max_window + window_factor*get_packet_size());
-		if (ss_cwnd > ssthresh) {
-			slow_start = false;
+	if (conn->slow_start) {
+		size_t ss_cwnd = (size_t)(conn->max_window + window_factor*utp_socket_get_packet_size(conn));
+		if (ss_cwnd > conn->ssthresh) {
+			conn->slow_start = false;
 		} else if (our_delay > target*0.9) {
 			// even if we're a little under the target delay, we conservatively
 			// discontinue the slow start phase
-			slow_start = false;
-			ssthresh = max_window;
+			conn->slow_start = false;
+			conn->ssthresh = conn->max_window;
 		} else {
-			max_window = MAX(ss_cwnd, ledbat_cwnd);
+			conn->max_window = MAX(ss_cwnd, ledbat_cwnd);
 		}
 	} else {
-		max_window = ledbat_cwnd;
+		conn->max_window = ledbat_cwnd;
 	}
 
 
 	// make sure that the congestion window is below max
 	// make sure that we don't shrink our window too small
-	if (max_window > opt_sndbuf)
-		max_window = opt_sndbuf;
-	if (max_window < MIN_WINDOW_SIZE)
-		max_window = MIN_WINDOW_SIZE;
+	if (conn->max_window > conn->opt_sndbuf)
+		conn->max_window = conn->opt_sndbuf;
+	if (conn->max_window < MIN_WINDOW_SIZE)
+		conn->max_window = MIN_WINDOW_SIZE;
 
 	// used in parse_log.py
-	log(UTP_LOG_NORMAL, "actual_delay:%u our_delay:%d their_delay:%u off_target:%d max_window:%u "
+	utp_socket_log(conn, UTP_LOG_NORMAL, "actual_delay:%u our_delay:%d their_delay:%u off_target:%d max_window:%u "
 			"delay_base:%u delay_sum:%d target_delay:%d acked_bytes:%u cur_window:%u "
 			"scaled_gain:%f rtt:%u rate:%u wnduser:%u rto:%u timeout:%d get_microseconds:" I64u " "
 			"cur_window_packets:%u packet_size:%u their_delay_base:%u their_actual_delay:%u "
 			"average_delay:%d clock_drift:%d clock_drift_raw:%d delay_penalty:%d current_delay_sum:" I64u
 			"current_delay_samples:%d average_delay_base:%d last_maxed_out_window:" I64u " opt_sndbuf:%d "
 			"current_ms:" I64u "",
-			actual_delay, our_delay / 1000, their_hist.get_value() / 1000,
-			int(off_target / 1000), uint(max_window), uint32(our_hist.delay_base),
-			int((our_delay + their_hist.get_value()) / 1000), int(target / 1000), uint(bytes_acked),
-			(uint)(cur_window - bytes_acked), (float)(scaled_gain), rtt,
-			(uint)(max_window * 1000 / (rtt_hist.delay_base?rtt_hist.delay_base:50)),
-			(uint)max_window_user, rto, (int)(rto_timeout - ctx->current_ms),
-			utp_call_get_microseconds(this->ctx, this), cur_window_packets, (uint)get_packet_size(),
-			their_hist.delay_base, their_hist.delay_base + their_hist.get_value(),
-			average_delay, clock_drift, clock_drift_raw, penalty / 1000,
-			current_delay_sum, current_delay_samples, average_delay_base,
-			uint64(last_maxed_out_window), int(opt_sndbuf), uint64(ctx->current_ms));
+			actual_delay, our_delay / 1000, delay_hist_get_value(&conn->their_hist) / 1000,
+			(int)(off_target / 1000), (uint)conn->max_window, (uint32)conn->our_hist.delay_base,
+			(int)(our_delay + delay_hist_get_value(&conn->their_hist) / 1000), (int)target / 1000, (uint)bytes_acked,
+			(uint)(conn->cur_window - bytes_acked), (float)(scaled_gain), conn->rtt,
+			(uint)(conn->max_window * 1000 / (conn->rtt_hist.delay_base?conn->rtt_hist.delay_base:50)),
+			(uint)conn->max_window_user, conn->rto, (int)(conn->rto_timeout - conn->ctx->current_ms),
+			utp_call_get_microseconds(conn->ctx, conn), conn->cur_window_packets, (uint)utp_socket_get_packet_size(conn),
+			conn->their_hist.delay_base, conn->their_hist.delay_base + delay_hist_get_value(&conn->their_hist),
+			conn->average_delay, conn->clock_drift, conn->clock_drift_raw, penalty / 1000,
+			conn->current_delay_sum, conn->current_delay_samples, conn->average_delay_base,
+			(uint64)conn->last_maxed_out_window, (int)conn->opt_sndbuf, (uint64)conn->ctx->current_ms);
 }
 
 static void utp_register_recv_packet(UTPSocket *conn, size_t len)
@@ -1766,17 +1800,17 @@ static void utp_register_recv_packet(UTPSocket *conn, size_t len)
 
 // returns the max number of bytes of payload the uTP
 // connection is allowed to send
-size_t UTPSocket::get_packet_size() const
+size_t utp_socket_get_packet_size(const utp_socket *conn)
 {
 	int header_size = sizeof(PacketFormatV1);
-	size_t mtu = mtu_last ? mtu_last : mtu_ceiling;
+	size_t mtu = conn->mtu_last ? conn->mtu_last : conn->mtu_ceiling;
 	return mtu - header_size;
 }
 
 // Process an incoming packet
 // syn is true if this is the first packet received. It will cut off parsing
 // as soon as the header is done
-size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, bool syn = false)
+size_t utp_process_incoming(utp_socket *conn, const byte *packet, size_t len, bool syn)
 {
 	utp_register_recv_packet(conn, len);
 
@@ -1787,7 +1821,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 
 	uint16 pk_seq_nr = ntohs(pf1->seq_nr);
 	uint16 pk_ack_nr = ntohs(pf1->ack_nr);
-	uint8 pk_flags   = pf1->type();
+	uint8 pk_flags   = packet_format_type(pf1);
 
 	if (pk_flags >= ST_NUM_STATES) return 0;
 
@@ -1828,8 +1862,8 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 
 	// Unpack UTP packet options
 	// Data pointer
-	const byte *data = (const byte*)pf1 + conn->get_header_size();
-	if (conn->get_header_size() > len) {
+	const byte *data = (const byte*)pf1 + sizeof(PacketFormatV1);
+	if (sizeof(PacketFormatV1) > len) {
 
 		#if UTP_DEBUG_LOGGING
 		conn->log(UTP_LOG_DEBUG, "Invalid packet size (less than header size)");
@@ -1901,7 +1935,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 	// Getting an invalid sequence number?
 	if (seqnr >= REORDER_BUFFER_MAX_SIZE) {
 		if (seqnr >= (SEQ_NR_MASK + 1) - REORDER_BUFFER_MAX_SIZE && pk_flags != ST_STATE) {
-			conn->schedule_ack();
+			utp_socket_schedule_ack(conn);
 		}
 
 		#if UTP_DEBUG_LOGGING
@@ -1941,8 +1975,8 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 				// ICMP report back yet
 				if (pk_ack_nr == ((conn->mtu_probe_seq - 1) & ACK_NR_MASK)) {
 					conn->mtu_ceiling = conn->mtu_probe_size - 1;
-					conn->mtu_search_update();
-					conn->log(UTP_LOG_MTU, "MTU [DUPACK] floor:%d ceiling:%d current:%d"
+					utp_socket_mtu_search_update(conn);
+					utp_socket_log(conn, UTP_LOG_MTU, "MTU [DUPACK] floor:%d ceiling:%d current:%d"
 						, conn->mtu_floor, conn->mtu_ceiling, conn->mtu_last);
 				} else {
 					// A non-probe was blocked before our probe.
@@ -1974,14 +2008,14 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 
 	for (int i = 0; i < acks; ++i) {
 		int seq = (conn->seq_nr - conn->cur_window_packets + i) & ACK_NR_MASK;
-		OutgoingPacket *pkt = (OutgoingPacket*)conn->outbuf.get(seq);
+		OutgoingPacket *pkt = circbuf_get(&conn->outbuf, seq);
 		if (pkt == 0 || pkt->transmissions == 0) continue;
 		assert((int)(pkt->payload) >= 0);
 		acked_bytes += pkt->payload;
 		if (conn->mtu_probe_seq && seq == conn->mtu_probe_seq) {
 			conn->mtu_floor = conn->mtu_probe_size;
-			conn->mtu_search_update();
-			conn->log(UTP_LOG_MTU, "MTU [ACK] floor:%d ceiling:%d current:%d"
+			utp_socket_mtu_search_update(conn);
+			utp_socket_log(conn, UTP_LOG_MTU, "MTU [ACK] floor:%d ceiling:%d current:%d"
 				, conn->mtu_floor, conn->mtu_ceiling, conn->mtu_last);
 		}
 
@@ -1994,8 +2028,8 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 
 	// count bytes acked by EACK
 	if (selack_ptr != NULL) {
-		acked_bytes += conn->selective_ack_bytes((pk_ack_nr + 2) & ACK_NR_MASK,
-												 selack_ptr, selack_ptr[-1], min_rtt);
+		acked_bytes += utp_socket_selective_ack_bytes(conn, (pk_ack_nr + 2) & ACK_NR_MASK,
+												 selack_ptr, selack_ptr[-1], &min_rtt);
 	}
 
 	#if UTP_DEBUG_LOGGING
@@ -2013,7 +2047,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 	const uint32 their_delay = (uint32)(p == 0 ? 0 : time - p);
 	conn->reply_micro = their_delay;
 	uint32 prev_delay_base = conn->their_hist.delay_base;
-	if (their_delay != 0) conn->their_hist.add_sample(their_delay, conn->ctx->current_ms);
+	if (their_delay != 0) delay_hist_add_sample(&conn->their_hist, their_delay, conn->ctx->current_ms);
 
 	// if their new delay base is less than their previous one
 	// we should shift our delay base in the other direction in order
@@ -2022,7 +2056,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 		wrapping_compare_less(conn->their_hist.delay_base, prev_delay_base, TIMESTAMP_MASK)) {
 		// never adjust more than 10 milliseconds
 		if (prev_delay_base - conn->their_hist.delay_base <= 10000) {
-			conn->our_hist.shift(prev_delay_base - conn->their_hist.delay_base);
+			delay_hist_shift(&conn->our_hist, prev_delay_base - conn->their_hist.delay_base);
 		}
 	}
 
@@ -2033,7 +2067,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 	// know what it is. We can't update out history unless
 	// we have a true measured sample
 	if (actual_delay != 0) {
-		conn->our_hist.add_sample(actual_delay, conn->ctx->current_ms);
+		delay_hist_add_sample(&conn->our_hist, actual_delay, conn->ctx->current_ms);
 
 		// this is keeping an average of the delay samples
 		// we've recevied within the last 5 seconds. We sum
@@ -2057,7 +2091,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 //			assert(-int64(dist_down) < INT_MAX / 4);
 			// average_delay_base >= actual_delay, we should end up
 			// with a negative sample
-			average_delay_sample = -int64(dist_down);
+			average_delay_sample = -(int64)dist_down;
 		}
 		conn->current_delay_sum += average_delay_sample;
 		++conn->current_delay_samples;
@@ -2114,7 +2148,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 			int32 drift = conn->average_delay - prev_average_delay;
 
 			// clock_drift is a rolling average
-			conn->clock_drift = (int64(conn->clock_drift) * 7 + drift) / 8;
+			conn->clock_drift = ((int64)conn->clock_drift * 7 + drift) / 8;
 			conn->clock_drift_raw = drift;
 		}
 	}
@@ -2141,15 +2175,15 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 	// if the delay estimate exceeds the RTT, adjust the base_delay to
 	// compensate
 	assert(min_rtt >= 0);
-	if (int64(conn->our_hist.get_value()) > min_rtt) {
-		conn->our_hist.shift((uint32)(conn->our_hist.get_value() - min_rtt));
+	if ((int64)delay_hist_get_value(&conn->our_hist) > min_rtt) {
+		delay_hist_shift(&conn->our_hist, (uint32)(delay_hist_get_value(&conn->our_hist) - min_rtt));
 	}
 
 	// only apply the congestion controller on acks
 	// if we don't have a delay measurement, there's
 	// no point in invoking the congestion control
 	if (actual_delay != 0 && acked_bytes >= 1)
-		conn->apply_ccontrol(acked_bytes, actual_delay, min_rtt);
+		utp_socket_apply_ccontrol(conn, acked_bytes, actual_delay, min_rtt);
 
 	// sanity check, the other end should never ack packets
 	// past the point we've sent
@@ -2204,7 +2238,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 		#endif
 
 		for (int i = 0; i < acks; ++i) {
-			int ack_status = conn->ack_packet(conn->seq_nr - conn->cur_window_packets);
+			int ack_status = utp_socket_ack_packet(conn, conn->seq_nr - conn->cur_window_packets);
 			// if ack_status is 0, the packet was acked.
 			// if acl_stauts is 1, it means that the packet had already been acked
 			// if it's 2, the packet has not been sent yet
@@ -2238,7 +2272,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 		// in the send queue
 		// this is especially likely to happen when the other end
 		// has the EACK send bug older versions of uTP had
-		while (conn->cur_window_packets > 0 && !conn->outbuf.get(conn->seq_nr - conn->cur_window_packets)) {
+		while (conn->cur_window_packets > 0 && !circbuf_get(&conn->outbuf, conn->seq_nr - conn->cur_window_packets)) {
 			conn->cur_window_packets--;
 
 			#if UTP_DEBUG_LOGGING
@@ -2253,14 +2287,14 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 		#endif
 
 		// this invariant should always be true
-		assert(conn->cur_window_packets == 0 || conn->outbuf.get(conn->seq_nr - conn->cur_window_packets));
+		assert(conn->cur_window_packets == 0 || circbuf_get(&conn->outbuf, conn->seq_nr - conn->cur_window_packets));
 
 		// flush Nagle
 		if (conn->cur_window_packets == 1) {
-			OutgoingPacket *pkt = (OutgoingPacket*)conn->outbuf.get(conn->seq_nr - 1);
+			OutgoingPacket *pkt = circbuf_get(&conn->outbuf, conn->seq_nr - 1);
 			// do we still have quota?
 			if (pkt->transmissions == 0) {
-				conn->send_packet(pkt);
+				utp_socket_send_packet(conn, pkt);
 			}
 		}
 
@@ -2278,7 +2312,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 			} else {
 				// resend the oldest packet and increment fast_resend_seq_nr
 				// to not allow another fast resend on it again
-				OutgoingPacket *pkt = (OutgoingPacket*)conn->outbuf.get(conn->seq_nr - conn->cur_window_packets);
+				OutgoingPacket *pkt = circbuf_get(&conn->outbuf, conn->seq_nr - conn->cur_window_packets);
 				if (pkt && pkt->transmissions > 0) {
 
 					#if UTP_DEBUG_LOGGING
@@ -2290,7 +2324,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 					#endif
 
 					conn->fast_resend_seq_nr++;
-					conn->send_packet(pkt);
+					utp_socket_send_packet(conn, pkt);
 				}
 			}
 		}
@@ -2298,11 +2332,11 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 
 	// Process selective acknowledgent
 	if (selack_ptr != NULL) {
-		conn->selective_ack(pk_ack_nr + 2, selack_ptr, selack_ptr[-1]);
+		utp_socket_selective_ack(conn, pk_ack_nr + 2, selack_ptr, selack_ptr[-1]);
 	}
 
 	// this invariant should always be true
-	assert(conn->cur_window_packets == 0 || conn->outbuf.get(conn->seq_nr - conn->cur_window_packets));
+	assert(conn->cur_window_packets == 0 || circbuf_get(&conn->outbuf, conn->seq_nr - conn->cur_window_packets));
 
 	#if UTP_DEBUG_LOGGING
 	conn->log(UTP_LOG_DEBUG, "acks:%d acked_bytes:%u seq_nr:%u cur_window:%u cur_window_packets:%u ",
@@ -2311,7 +2345,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 
 	// In case the ack dropped the current window below
 	// the max_window size, Mark the socket as writable
-	if (conn->state == CS_CONNECTED_FULL && !conn->is_full()) {
+	if (conn->state == CS_CONNECTED_FULL && !utp_socket_is_full(conn, -1)) {
 		conn->state = CS_CONNECTED;
 		#if UTP_DEBUG_LOGGING
 		conn->log(UTP_LOG_DEBUG, "Socket writable. max_window:%u cur_window:%u packet_size:%u",
@@ -2379,7 +2413,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 				utp_call_on_state_change(conn->ctx, conn, UTP_STATE_EOF);
 
 				// if the other end wants to close, ack
-				conn->send_ack();
+				utp_socket_send_ack(conn, false);
 
 				// reorder_count is not necessarily 0 at this point.
 				// even though it is most of the time, the other end
@@ -2396,10 +2430,10 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 
 			// Check if there are additional buffers in the reorder buffers
 			// that need delivery.
-			byte *p = (byte*)conn->inbuf.get(conn->ack_nr+1);
+			byte *p = circbuf_get(&conn->inbuf, conn->ack_nr+1);
 			if (p == NULL)
 				break;
-			conn->inbuf.put(conn->ack_nr+1, NULL);
+			circbuf_put(&conn->inbuf, conn->ack_nr+1, NULL);
 			count = *(uint*)p;
 			if (count > 0 && !conn->read_shutdown) {
 				// Pass the bytes to the upper layer
@@ -2413,7 +2447,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 			conn->reorder_count--;
 		}
 
-		conn->schedule_ack();
+		utp_socket_schedule_ack(conn);
 	} else {
 		// Getting an out of order packet.
 		// The packet needs to be remembered and rearranged later.
@@ -2448,11 +2482,11 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 		// check if the packet is already in here, so that
 		// we don't end up looking at an older packet (since
 		// the indices wraps around).
-		conn->inbuf.ensure_size(pk_seq_nr + 1, seqnr + 1);
+		circbuf_ensure_size(&conn->inbuf, pk_seq_nr + 1, seqnr + 1);
 
 		// Has this packet already been received? (i.e. a duplicate)
 		// If that is the case, just discard it.
-		if (conn->inbuf.get(pk_seq_nr) != NULL) {
+		if (circbuf_get(&conn->inbuf, pk_seq_nr) != NULL) {
 			#ifdef _DEBUG
 			++conn->_stats.nduprecv;
 			#endif
@@ -2472,9 +2506,9 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 		// is valid. we have to add one to seqnr too, in order
 		// to make the circular buffer grow around the correct
 		// point (which is conn->ack_nr + 1).
-		assert(conn->inbuf.get(pk_seq_nr) == NULL);
+		assert(circbuf_get(&conn->inbuf, pk_seq_nr) == NULL);
 		assert((pk_seq_nr & conn->inbuf.mask) != ((conn->ack_nr+1) & conn->inbuf.mask));
-		conn->inbuf.put(pk_seq_nr, mem);
+		circbuf_put(&conn->inbuf, pk_seq_nr, mem);
 		conn->reorder_count++;
 
 		#if UTP_DEBUG_LOGGING
@@ -2482,7 +2516,7 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 			conn->reorder_count, (uint)(packet_end - data), (uint)utp_call_get_read_buffer_size(conn->ctx, conn));
 		#endif
 
-		conn->schedule_ack();
+		utp_socket_schedule_ack(conn);
 	}
 
 	return (size_t)(packet_end - data);
@@ -2490,45 +2524,46 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 
 inline byte UTP_Version(PacketFormatV1 const* pf)
 {
-	return (pf->type() < ST_NUM_STATES && pf->ext < 3 ? pf->version() : 0);
+	return (packet_format_type(pf) < ST_NUM_STATES && pf->ext < 3 ? packet_format_version(pf) : 0);
 }
 
-UTPSocket::~UTPSocket()
+void utp_socket_delete(utp_socket *conn)
 {
 	#if UTP_DEBUG_LOGGING
 	log(UTP_LOG_DEBUG, "Killing socket");
 	#endif
 
-	utp_call_on_state_change(ctx, this, UTP_STATE_DESTROYING);
+	utp_call_on_state_change(conn->ctx, conn, UTP_STATE_DESTROYING);
 
-	if (ctx->last_utp_socket == this) {
-		ctx->last_utp_socket = NULL;
+	if (conn->ctx->last_utp_socket == conn) {
+		conn->ctx->last_utp_socket = NULL;
 	}
 
 	// Remove object from the global hash table
-	UTPSocketKeyData* kd = utp_hash_del(ctx->utp_sockets, &(UTPSocketKey){addr, conn_id_recv});
+	UTPSocketKeyData* kd = utp_hash_del(conn->ctx->utp_sockets, &(UTPSocketKey){conn->addr, conn->conn_id_recv});
 	assert(kd);
 
 	// remove the socket from ack_sockets if it was there also
-	removeSocketFromAckList(this);
+	removeSocketFromAckList(conn);
 
 	// Free all memory occupied by the socket object.
-	for (size_t i = 0; i <= inbuf.mask; i++) {
-		free(inbuf.elements[i]);
+	for (size_t i = 0; i <= conn->inbuf.mask; i++) {
+		free(conn->inbuf.elements[i]);
 	}
-	for (size_t i = 0; i <= outbuf.mask; i++) {
-		free(outbuf.elements[i]);
+	for (size_t i = 0; i <= conn->outbuf.mask; i++) {
+		free(conn->outbuf.elements[i]);
 	}
 	// TODO: The circular buffer should have a destructor
-	free(inbuf.elements);
-	free(outbuf.elements);
+	free(conn->inbuf.elements);
+	free(conn->outbuf.elements);
+	free(conn);
 }
 
 void UTP_FreeAll(utp_hash_t *utp_sockets) {
-	utp_hash_iterator_t it = {-1u, -1u};
+	utp_hash_iterator_t it = {-1, -1};
 	UTPSocketKeyData* keyData;
 	while ((keyData = utp_hash_iterate(utp_sockets, &it))) {
-		delete keyData->socket;
+		utp_socket_delete(keyData->socket);
 	}
 }
 
@@ -2566,19 +2601,19 @@ void utp_initialize_socket(	utp_socket *conn,
 	conn->average_sample_time	= conn->ctx->current_ms + 5000;
 	conn->last_rwin_decay		= conn->ctx->current_ms - MAX_WINDOW_DECAY;
 
-	conn->our_hist.clear(conn->ctx->current_ms);
-	conn->their_hist.clear(conn->ctx->current_ms);
-	conn->rtt_hist.clear(conn->ctx->current_ms);
+	delay_hist_clear(&conn->our_hist, conn->ctx->current_ms);
+	delay_hist_clear(&conn->their_hist, conn->ctx->current_ms);
+	delay_hist_clear(&conn->rtt_hist, conn->ctx->current_ms);
 
 	// initialize MTU floor and ceiling
-	conn->mtu_reset();
+	utp_socket_mtu_reset(conn);
 	conn->mtu_last = conn->mtu_ceiling;
 
 	UTPSocketKeyData* keyData = utp_hash_add(&conn->ctx->utp_sockets, &(UTPSocketKey){conn->addr, conn->conn_id_recv});
 	keyData->socket = conn;
 
 	// we need to fit one packet in the window when we start the connection
-	conn->max_window = conn->get_packet_size();
+	conn->max_window = utp_socket_get_packet_size(conn);
 
 	#if UTP_DEBUG_LOGGING
 	conn->log(UTP_LOG_DEBUG, "UTP socket initialized");
@@ -2590,7 +2625,7 @@ utp_socket*	utp_create_socket(utp_context *ctx)
 	assert(ctx);
 	if (!ctx) return NULL;
 
-	UTPSocket *conn = new UTPSocket; // TODO: UTPSocket should have a constructor
+	UTPSocket *conn = malloc(sizeof(*conn));
 
 	SOCKADDR_STORAGE sa;
 	memset(&sa, 0, sizeof(sa));
@@ -2775,7 +2810,7 @@ int utp_connect(utp_socket *conn, const struct sockaddr *to, socklen_t tolen)
 	utp_initialize_socket(conn, to, tolen, true, 0, 0, 1);
 
 	assert(conn->cur_window_packets == 0);
-	assert(conn->outbuf.get(conn->seq_nr) == NULL);
+	assert(circbuf_get(&conn->outbuf, conn->seq_nr) == NULL);
 	assert(sizeof(PacketFormatV1) == 20);
 
 	conn->state = CS_SYN_SENT;
@@ -2784,7 +2819,7 @@ int utp_connect(utp_socket *conn, const struct sockaddr *to, socklen_t tolen)
 	// Create and send a connect message
 
 	// used in parse_log.py
-	conn->log(UTP_LOG_NORMAL, "UTP_Connect conn_seed:%u packet_size:%u (B) "
+	utp_socket_log(conn, UTP_LOG_NORMAL, "UTP_Connect conn_seed:%u packet_size:%u (B) "
 			"target_delay:%u (ms) delay_history:%u "
 			"delay_base_history:%u (minutes)",
 			conn->conn_seed, PACKET_SIZE, conn->target_delay / 1000,
@@ -2793,7 +2828,7 @@ int utp_connect(utp_socket *conn, const struct sockaddr *to, socklen_t tolen)
 	// Setup initial timeout timer.
 	conn->retransmit_timeout = 3000;
 	conn->rto_timeout = conn->ctx->current_ms + conn->retransmit_timeout;
-	conn->last_rcv_win = conn->get_rcv_window();
+	conn->last_rcv_win = utp_socket_get_rcv_window(conn);
 
 	// if you need compatibiltiy with 1.8.1, use this. it increases attackability though.
 	//conn->seq_nr = 1;
@@ -2808,8 +2843,8 @@ int utp_connect(utp_socket *conn, const struct sockaddr *to, socklen_t tolen)
 	memset(p1, 0, header_size);
 	// SYN packets are special, and have the receive ID in the connid field,
 	// instead of conn_id_send.
-	p1->set_version(1);
-	p1->set_type(ST_SYN);
+	packet_format_set_version(p1, 1);
+	packet_format_set_type(p1, ST_SYN);
 	p1->ext = 0;
 	p1->connid = htons(conn->conn_id_recv);
 	p1->windowsize = htonl(conn->last_rcv_win);
@@ -2826,8 +2861,8 @@ int utp_connect(utp_socket *conn, const struct sockaddr *to, socklen_t tolen)
 	*/
 
 	// Remember the message in the outgoing queue.
-	conn->outbuf.ensure_size(conn->seq_nr, conn->cur_window_packets);
-	conn->outbuf.put(conn->seq_nr, pkt);
+	circbuf_ensure_size(&conn->outbuf, conn->seq_nr, conn->cur_window_packets);
+	circbuf_put(&conn->outbuf, conn->seq_nr, pkt);
 	conn->seq_nr++;
 	conn->cur_window_packets++;
 
@@ -2835,7 +2870,7 @@ int utp_connect(utp_socket *conn, const struct sockaddr *to, socklen_t tolen)
 	conn->log(UTP_LOG_DEBUG, "incrementing cur_window_packets:%u", conn->cur_window_packets);
 	#endif
 
-	conn->send_packet(pkt);
+	utp_socket_send_packet(conn, pkt);
 	return 0;
 }
 
@@ -2878,7 +2913,7 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 	ctx->log(UTP_LOG_DEBUG, NULL, "recv id:%u seq_nr:%u ack_nr:%u", id, htons(pf1->seq_nr), htons(pf1->ack_nr));
 	#endif
 
-	const byte flags = pf1->type();
+	const byte flags = packet_format_type(pf1);
 
 	if (flags == ST_RESET) {
 		// id is either our recv id or our send id
@@ -2902,7 +2937,7 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 			else
 				conn->state = CS_RESET;
 
-			utp_call_on_overhead_statistics(conn->ctx, conn, false, len + conn->get_udp_overhead(), close_overhead);
+			utp_call_on_overhead_statistics(conn->ctx, conn, false, len + utp_socket_get_udp_overhead(conn), close_overhead);
 			const int err = (conn->state == CS_SYN_SENT) ? UTP_ECONNREFUSED : UTP_ECONNRESET;
 			utp_call_on_error(conn->ctx, conn, err);
 		}
@@ -2932,8 +2967,8 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 			ctx->log(UTP_LOG_DEBUG, NULL, "recv processing");
 			#endif
 
-			const size_t read = utp_process_incoming(conn, buffer, len);
-			utp_call_on_overhead_statistics(conn->ctx, conn, false, (len - read) + conn->get_udp_overhead(), header_overhead);
+			const size_t read = utp_process_incoming(conn, buffer, len, false);
+			utp_call_on_overhead_statistics(conn->ctx, conn, false, (len - read) + utp_socket_get_udp_overhead(conn), header_overhead);
 			return 1;
 		}
 	}
@@ -2981,7 +3016,7 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 		r->ack_nr = seq_nr;
 		r->timestamp = ctx->current_ms;
 
-		UTPSocket::send_rst(ctx, addr, id, seq_nr, utp_call_get_random(ctx, NULL));
+		utp_socket_send_rst(ctx, &addr, id, seq_nr, utp_call_get_random(ctx, NULL));
 		return 1;
 	}
 
@@ -3033,13 +3068,13 @@ int utp_process_udp(utp_context *ctx, const byte *buffer, size_t len, const stru
 		ctx->log(UTP_LOG_DEBUG, NULL, "recv send connect ACK");
 		#endif
 
-		conn->send_ack(true);
+		utp_socket_send_ack(conn, true);
 
 		utp_call_on_accept(ctx, conn, to, tolen);
 
 		// we report overhead after on_accept(), because the callbacks are setup now
-		utp_call_on_overhead_statistics(conn->ctx, conn, false, (len - read) + conn->get_udp_overhead(), header_overhead); // SYN
-		utp_call_on_overhead_statistics(conn->ctx, conn, true,  conn->get_overhead(),                    ack_overhead);    // SYNACK
+		utp_call_on_overhead_statistics(conn->ctx, conn, false, (len - read) + utp_socket_get_udp_overhead(conn), header_overhead); // SYN
+		utp_call_on_overhead_statistics(conn->ctx, conn, true,  utp_socket_get_overhead(conn),                    ack_overhead);    // SYNACK
 	}
 	else {
 
@@ -3122,7 +3157,7 @@ int utp_process_icmp_fragmentation(utp_context *ctx, const byte* buffer, size_t 
 	// Constrain the next_hop_mtu to sane values.  It might not be initialized or sent properly
 	if (next_hop_mtu >= 576 && next_hop_mtu < 0x2000) {
 		conn->mtu_ceiling = MIN(next_hop_mtu, conn->mtu_ceiling);
-		conn->mtu_search_update();
+		utp_socket_mtu_search_update(conn);
 		// this is something of a speecial case, where we don't set mtu_last
 		// to the value in between the floor and the ceiling. We can update the
 		// floor, because there might be more network segments after the one
@@ -3136,10 +3171,10 @@ int utp_process_icmp_fragmentation(utp_context *ctx, const byte* buffer, size_t 
 		// to just lower the ceiling. This should not happen on working networks
 		// anyway.
 		conn->mtu_ceiling = (conn->mtu_floor + conn->mtu_ceiling) / 2;
-		conn->mtu_search_update();
+		utp_socket_mtu_search_update(conn);
 	}
 
-	conn->log(UTP_LOG_MTU, "MTU [ICMP] floor:%d ceiling:%d current:%d", conn->mtu_floor, conn->mtu_ceiling, conn->mtu_last);
+	utp_socket_log(conn, UTP_LOG_MTU, "MTU [ICMP] floor:%d ceiling:%d current:%d", conn->mtu_floor, conn->mtu_ceiling, conn->mtu_last);
 	return 1;
 }
 
@@ -3192,7 +3227,7 @@ int utp_process_icmp_error(utp_context *ctx, const byte *buffer, size_t len, con
 // 0 indicates the socket is no longer writable, -1 indicates an error
 ssize_t utp_writev(utp_socket *conn, struct utp_iovec *iovec_input, size_t num_iovecs)
 {
-	static utp_iovec iovec[UTP_IOV_MAX];
+	static struct utp_iovec iovec[UTP_IOV_MAX];
 
 	assert(conn);
 	if (!conn) return -1;
@@ -3234,9 +3269,9 @@ ssize_t utp_writev(utp_socket *conn, struct utp_iovec *iovec_input, size_t num_i
 	conn->ctx->current_ms = utp_call_get_milliseconds(conn->ctx, conn);
 
 	// don't send unless it will all fit in the window
-	size_t packet_size = conn->get_packet_size();
+	size_t packet_size = utp_socket_get_packet_size(conn);
 	size_t num_to_send = MIN(bytes, packet_size);
-	while (!conn->is_full(num_to_send)) {
+	while (!utp_socket_is_full(conn, num_to_send)) {
 		// Send an outgoing packet.
 		// Also add it to the outgoing of packets that have been sent but not ACKed.
 
@@ -3251,7 +3286,7 @@ ssize_t utp_writev(utp_socket *conn, struct utp_iovec *iovec_input, size_t num_i
 			(uint)conn->last_rcv_win, num_to_send,
 			conn->cur_window_packets);
 		#endif
-		conn->write_outgoing_packet(num_to_send, ST_DATA, iovec, num_iovecs);
+		utp_socket_write_outgoing_packet(conn, num_to_send, ST_DATA, iovec, num_iovecs);
 		num_to_send = MIN(bytes, packet_size);
 
 		if (num_to_send == 0) {
@@ -3262,7 +3297,7 @@ ssize_t utp_writev(utp_socket *conn, struct utp_iovec *iovec_input, size_t num_i
 		}
 	}
 
-	bool full = conn->is_full();
+	bool full = utp_socket_is_full(conn, -1);
 	if (full) {
 		// mark the socket as not being writable.
 		conn->state = CS_CONNECTED_FULL;
@@ -3286,15 +3321,15 @@ void utp_read_drained(utp_socket *conn)
 	assert(conn->state != CS_UNINITIALIZED);
 	if (conn->state == CS_UNINITIALIZED) return;
 
-	const size_t rcvwin = conn->get_rcv_window();
+	const size_t rcvwin = utp_socket_get_rcv_window(conn);
 
 	if (rcvwin > conn->last_rcv_win) {
 		// If last window was 0 send ACK immediately, otherwise should set timer
 		if (conn->last_rcv_win == 0) {
-			conn->send_ack();
+			utp_socket_send_ack(conn, false);
 		} else {
 			conn->ctx->current_ms = utp_call_get_milliseconds(conn->ctx, conn);
-			conn->schedule_ack();
+			utp_socket_schedule_ack(conn);
 		}
 	}
 }
@@ -3307,7 +3342,7 @@ void utp_issue_deferred_acks(utp_context *ctx)
 
 	for (size_t i = 0; i < ctx->ack_sockets_count; i++) {
 		UTPSocket *conn = ctx->ack_sockets[i];
-		conn->send_ack();
+		utp_socket_send_ack(conn, false);
 		i--;
 	}
 }
@@ -3337,18 +3372,18 @@ void utp_check_timeouts(utp_context *ctx)
 		ctx->rst_info = (RST_Info*)realloc(ctx->rst_info, ctx->rst_info_alloc * sizeof(ctx->rst_info[0]));
 	}
 
-	utp_hash_iterator_t it = {-1u, -1u};
+	utp_hash_iterator_t it = {-1, -1};
 	UTPSocketKeyData* keyData;
 	while ((keyData = utp_hash_iterate(ctx->utp_sockets, &it))) {
 		UTPSocket *conn = keyData->socket;
-		conn->check_timeouts();
+		utp_socket_check_timeouts(conn);
 
 		// Check if the object was deleted
 		if (conn->state == CS_DESTROY) {
 			#if UTP_DEBUG_LOGGING
 			conn->log(UTP_LOG_DEBUG, "Destroying");
 			#endif
-			delete conn;
+			utp_socket_delete(conn);
 		}
 	}
 }
@@ -3388,8 +3423,8 @@ int utp_get_delays(UTPSocket *conn, uint32 *ours, uint32 *theirs, uint32 *age)
 		return -1;
 	}
 
-	if (ours)   *ours   = conn->our_hist.get_value();
-	if (theirs) *theirs = conn->their_hist.get_value();
+	if (ours)   *ours   = delay_hist_get_value(&conn->our_hist);
+	if (theirs) *theirs = delay_hist_get_value(&conn->their_hist);
 	if (age)    *age    = (uint32)(conn->ctx->current_ms - conn->last_measured_delay);
 	return 0;
 }
@@ -3416,7 +3451,7 @@ void utp_close(UTPSocket *conn)
 		conn->close_requested = true;
 		if (!conn->fin_sent) {
 			conn->fin_sent = true;
-			conn->write_outgoing_packet(0, ST_FIN, NULL, 0);
+			utp_socket_write_outgoing_packet(conn, 0, ST_FIN, NULL, 0);
 		} else if (conn->fin_sent_acked) {
 			conn->state = CS_DESTROY;
 		}
@@ -3458,7 +3493,7 @@ void utp_shutdown(UTPSocket *conn, int how)
 		case CS_CONNECTED_FULL:
 			if (!conn->fin_sent) {
 				conn->fin_sent = true;
-				conn->write_outgoing_packet(0, ST_FIN, NULL, 0);
+				utp_socket_write_outgoing_packet(conn, 0, ST_FIN, NULL, 0);
 			}
 			break;
 		case CS_SYN_SENT:

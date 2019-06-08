@@ -41,11 +41,11 @@ extern "C" {
 /* These originally lived in utp_config.h */
 #define CCONTROL_TARGET (100 * 1000) // us
 
-enum bandwidth_type_t {
+typedef enum {
 	payload_bandwidth, connect_overhead,
 	close_overhead, ack_overhead,
 	header_overhead, retransmit_overhead
-};
+} bandwidth_type_t;
 
 #ifdef WIN32
 	#ifdef _MSC_VER

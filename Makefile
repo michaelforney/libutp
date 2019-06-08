@@ -1,12 +1,9 @@
 OBJS     = utp_internal.o utp_utils.o utp_hash.o utp_callbacks.o utp_api.o utp_packedsockaddr.o
 CFLAGS   = -Wall -DPOSIX -g -fno-exceptions -fPIC $(OPT)
 OPT ?= -O3
-CXXFLAGS = $(CFLAGS) -fno-rtti
 CC       = gcc
-CXX      = g++
 
-CXXFLAGS += -Wno-sign-compare
-CXXFLAGS += -fpermissive
+CFLAGS += -Wno-sign-compare
 
 # Uncomment to enable utp_get_stats(), and a few extra sanity checks
 #CFLAGS += -D_DEBUG
@@ -26,7 +23,7 @@ endif
 all: libutp.so libutp.a ucat ucat-static
 
 libutp.so: $(OBJS)
-	$(CXX) $(CXXFLAGS) -o libutp.so -shared $(OBJS)
+	$(CC) $(CFLAGS) -o libutp.so -shared $(OBJS)
 
 libutp.a: $(OBJS)
 	ar rvs libutp.a $(OBJS)
@@ -35,14 +32,14 @@ ucat: ucat.o libutp.so
 	$(CC) $(CFLAGS) -o ucat ucat.o -L. -lutp $(LDFLAGS)
 
 ucat-static: ucat.o libutp.a
-	$(CXX) $(CXXFLAGS) -o ucat-static ucat.o libutp.a $(LDFLAGS)
+	$(CC) $(CFLAGS) -o ucat-static ucat.o libutp.a $(LDFLAGS)
 
 clean:
 	rm -f *.o libutp.so libutp.a ucat ucat-static
 
-tags: $(shell ls *.cpp *.h)
+tags: $(shell ls *.c *.h)
 	rm -f tags
-	ctags *.cpp *.h
+	ctags *.c *.h
 
 anyway: clean all
 .PHONY: clean all anyway
