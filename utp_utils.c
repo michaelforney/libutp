@@ -172,12 +172,12 @@ static uint64_t __GetMicroseconds()
 		if (have_posix_clocks) {
 			struct timespec ts;
 			rc = clock_gettime(CLOCK_MONOTONIC, &ts);
-			return uint64(ts.tv_sec) * 1000000 + uint64(ts.tv_nsec) / 1000;
+			return (uint64)ts.tv_sec * 1000000 + (uint64)ts.tv_nsec / 1000;
 		}
 	#endif
 
 	gettimeofday(&tv, NULL);
-	return uint64(tv.tv_sec) * 1000000 + tv.tv_usec;
+	return (uint64)tv.tv_sec * 1000000 + tv.tv_usec;
 }
 
 #endif //!__APPLE__
