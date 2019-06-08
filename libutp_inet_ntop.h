@@ -42,8 +42,8 @@
 #define INET_NTOP inet_ntop
 #define INET_PTON inet_pton
 #else
-#define INET_NTOP libutp::inet_ntop // Win32, pre-XP: Use ours
-#define INET_PTON libutp::inet_pton
+#define INET_NTOP libutp_inet_ntop // Win32, pre-XP: Use ours
+#define INET_PTON libutp_inet_pton
 #endif
 #else // not WIN32
 #include <arpa/inet.h> // for inet_ntop, inet_pton
@@ -51,18 +51,20 @@
 #define INET_PTON inet_pton
 #endif
 
-//######################################################################
-//######################################################################
-namespace libutp {
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 
 //######################################################################
-const char *inet_ntop(int af, const void *src, char *dest, size_t length);
+const char *libutp_inet_ntop(int af, const void *src, char *dest, size_t length);
 
 //######################################################################
-int inet_pton(int af, const char* src, void* dest);
+int libutp_inet_pton(int af, const char* src, void* dest);
 
 
-} //namespace libutp
+#ifdef __cplusplus
+}
+#endif
 
 #endif // LIBUTP_INET_NTOP_H

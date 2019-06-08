@@ -28,7 +28,7 @@
 
 
 //######################################################################
-const char *libutp::inet_ntop(int af, const void *src, char *dest, size_t length)
+const char *libutp_inet_ntop(int af, const void *src, char *dest, size_t length)
 {
 	if (af != AF_INET && af != AF_INET6)
 	{
@@ -40,27 +40,27 @@ const char *libutp::inet_ntop(int af, const void *src, char *dest, size_t length
 
 	if (af == AF_INET)
 	{
-		address_length = sizeof(sockaddr_in);
-		sockaddr_in* ipv4_address = (sockaddr_in*)(&address);
+		address_length = sizeof(struct sockaddr_in);
+		struct sockaddr_in* ipv4_address = (struct sockaddr_in*)(&address);
 		ipv4_address->sin_family = AF_INET;
 		ipv4_address->sin_port = 0;
-		memcpy(&ipv4_address->sin_addr, src, sizeof(in_addr));
+		memcpy(&ipv4_address->sin_addr, src, sizeof(struct in_addr));
 	}
 	else // AF_INET6
 	{
-		address_length = sizeof(sockaddr_in6);
-		sockaddr_in6* ipv6_address = (sockaddr_in6*)(&address);
+		address_length = sizeof(struct sockaddr_in6);
+		struct sockaddr_in6* ipv6_address = (struct sockaddr_in6*)(&address);
 		ipv6_address->sin6_family = AF_INET6;
 		ipv6_address->sin6_port = 0;
 		ipv6_address->sin6_flowinfo = 0;
 		// hmmm
 		ipv6_address->sin6_scope_id = 0;
-		memcpy(&ipv6_address->sin6_addr, src, sizeof(in6_addr));
+		memcpy(&ipv6_address->sin6_addr, src, sizeof(struct in6_addr));
 	}
 
 	DWORD string_length = (DWORD)(length);
 	int result;
-	result = WSAAddressToStringA((sockaddr*)(&address),
+	result = WSAAddressToStringA((struct sockaddr*)(&address),
 								 address_length, 0, dest,
 								 &string_length);
 
@@ -70,7 +70,7 @@ const char *libutp::inet_ntop(int af, const void *src, char *dest, size_t length
 }
 
 //######################################################################
-int libutp::inet_pton(int af, const char* src, void* dest)
+int libutp_inet_pton(int af, const char* src, void* dest)
 {
 	if (af != AF_INET && af != AF_INET6)
 	{
@@ -80,27 +80,27 @@ int libutp::inet_pton(int af, const char* src, void* dest)
 	SOCKADDR_STORAGE address;
 	int address_length = sizeof(SOCKADDR_STORAGE);
 	int result = WSAStringToAddressA((char*)(src), af, 0,
-									 (sockaddr*)(&address),
+									 (struct sockaddr*)(&address),
 									 &address_length);
 
 	if (af == AF_INET)
 	{
 		if (result != SOCKET_ERROR)
 		{
-			sockaddr_in* ipv4_address =(sockaddr_in*)(&address);
-			memcpy(dest, &ipv4_address->sin_addr, sizeof(in_addr));
+			struct sockaddr_in* ipv4_address =(struct sockaddr_in*)(&address);
+			memcpy(dest, &ipv4_address->sin_addr, sizeof(struct in_addr));
 		}
 		else if (strcmp(src, "255.255.255.255") == 0)
 		{
-			((in_addr*)(dest))->s_addr = INADDR_NONE;
+			((struct in_addr*)(dest))->s_addr = INADDR_NONE;
 		}
 	}
 	else // AF_INET6
 	{
 		if (result != SOCKET_ERROR)
 		{
-			sockaddr_in6* ipv6_address = (sockaddr_in6*)(&address);
-			memcpy(dest, &ipv6_address->sin6_addr, sizeof(in6_addr));
+			struct sockaddr_in6* ipv6_address = (struct sockaddr_in6*)(&address);
+			memcpy(dest, &ipv6_address->sin6_addr, sizeof(struct in6_addr));
 		}
 	}
 
