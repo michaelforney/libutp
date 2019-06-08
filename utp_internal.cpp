@@ -2525,7 +2525,7 @@ UTPSocket::~UTPSocket()
 }
 
 void UTP_FreeAll(utp_hash_t *utp_sockets) {
-	utp_hash_iterator_t it;
+	utp_hash_iterator_t it = {-1u, -1u};
 	UTPSocketKeyData* keyData;
 	while ((keyData = utp_hash_iterate(utp_sockets, &it))) {
 		delete keyData->socket;
@@ -3328,7 +3328,7 @@ void utp_check_timeouts(utp_context *ctx)
 		ctx->rst_info = (RST_Info*)realloc(ctx->rst_info, ctx->rst_info_alloc * sizeof(ctx->rst_info[0]));
 	}
 
-	utp_hash_iterator_t it;
+	utp_hash_iterator_t it = {-1u, -1u};
 	UTPSocketKeyData* keyData;
 	while ((keyData = utp_hash_iterate(ctx->utp_sockets, &it))) {
 		UTPSocket *conn = keyData->socket;

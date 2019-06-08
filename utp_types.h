@@ -118,6 +118,8 @@ typedef char * str;
 
 #ifndef __cplusplus
 typedef uint8 bool;
+#define true 1
+#define false 0
 #endif
 
 #endif //__UTP_TYPES_H__
