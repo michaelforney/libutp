@@ -34,6 +34,10 @@
 #include "utp_hash.h"
 #include "utp_packedsockaddr.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* These originally lived in utp_config.h */
 #define CCONTROL_TARGET (100 * 1000) // us
 
@@ -57,6 +61,7 @@ enum bandwidth_type_t {
 	#endif
 #endif
 
+typedef struct RST_Info RST_Info;
 struct PACKED_ATTRIBUTE RST_Info {
 	PackedSockAddr addr;
 	uint32 connid;
@@ -75,6 +80,7 @@ struct UTPSocketKey {
 uint utp_socket_comp(const void *key_a, const void *key_b, size_t keysize);
 uint32 utp_socket_hash(const void *keyp, size_t keysize);
 
+typedef struct UTPSocketKeyData UTPSocketKeyData;
 struct UTPSocketKeyData {
 	UTPSocketKey key;
 	UTPSocket *socket;
@@ -109,9 +115,6 @@ struct struct_utp_context {
 	size_t opt_rcvbuf;
 	uint64 last_check;
 
-	struct_utp_context();
-	~struct_utp_context();
-
 	bool log_normal:1;	// log normal events?
 	bool log_mtu:1;		// log MTU related events?
 	bool log_debug:1;	// log debugging events? (Must also compile with UTP_DEBUG_LOGGING defined)
@@ -120,5 +123,9 @@ struct struct_utp_context {
 void utp_context_log(utp_context *ctx, int level, utp_socket *socket, char const *fmt, ...);
 void utp_context_log_unchecked(utp_context *ctx, utp_socket *socket, char const *fmt, ...);
 bool utp_context_would_log(utp_context *ctx, int level);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif //__UTP_INTERNAL_H__
