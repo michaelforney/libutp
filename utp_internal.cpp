@@ -565,7 +565,7 @@ struct UTPSocket {
 		char buf[4096], buf2[4096];
 
 		// don't bother with vsnprintf() etc calls if we're not going to log.
-		if (!ctx->would_log(level)) {
+		if (!utp_context_would_log(ctx, level)) {
 			return;
 		}
 
@@ -577,7 +577,7 @@ struct UTPSocket {
 		snprintf(buf2, 4096, "%p %s %06u %s", this, addrfmt(addr, addrbuf), conn_id_recv, buf);
 		buf2[4095] = '\0';
 
-		ctx->log_unchecked(this, buf2);
+		utp_context_log_unchecked(ctx, this, buf2);
 	}
 
 	void schedule_ack();
@@ -3485,19 +3485,19 @@ void* utp_get_userdata(utp_socket *socket) {
 	return socket ? socket->userdata : NULL;
 }
 
-void struct_utp_context::log(int level, utp_socket *socket, char const *fmt, ...)
+void utp_context_log(utp_context *ctx, int level, utp_socket *socket, char const *fmt, ...)
 {
-	if (!would_log(level)) {
+	if (!utp_context_would_log(ctx, level)) {
 		return;
 	}
 
 	va_list va;
 	va_start(va, fmt);
-	log_unchecked(socket, fmt, va);
+	utp_context_log_unchecked(ctx, socket, fmt, va);
 	va_end(va);
 }
 
-void struct_utp_context::log_unchecked(utp_socket *socket, char const *fmt, ...)
+void utp_context_log_unchecked(utp_context *ctx, utp_socket *socket, char const *fmt, ...)
 {
 	va_list va;
 	char buf[4096];
@@ -3507,14 +3507,14 @@ void struct_utp_context::log_unchecked(utp_socket *socket, char const *fmt, ...)
 	buf[4095] = '\0';
 	va_end(va);
 
-	utp_call_log(this, socket, (const byte *)buf);
+	utp_call_log(ctx, socket, (const byte *)buf);
 }
 
-inline bool struct_utp_context::would_log(int level)
+inline bool utp_context_would_log(utp_context *ctx, int level)
 {
-	if (level == UTP_LOG_NORMAL) return log_normal;
-	if (level == UTP_LOG_MTU) return log_mtu;
-	if (level == UTP_LOG_DEBUG) return log_debug;
+	if (level == UTP_LOG_NORMAL) return ctx->log_normal;
+	if (level == UTP_LOG_MTU) return ctx->log_mtu;
+	if (level == UTP_LOG_DEBUG) return ctx->log_debug;
 	return true;
 }
 

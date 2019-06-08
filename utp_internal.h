@@ -112,13 +112,13 @@ struct struct_utp_context {
 	struct_utp_context();
 	~struct_utp_context();
 
-	void log(int level, utp_socket *socket, char const *fmt, ...);
-	void log_unchecked(utp_socket *socket, char const *fmt, ...);
-	bool would_log(int level);
-
 	bool log_normal:1;	// log normal events?
 	bool log_mtu:1;		// log MTU related events?
 	bool log_debug:1;	// log debugging events? (Must also compile with UTP_DEBUG_LOGGING defined)
 };
+
+void utp_context_log(utp_context *ctx, int level, utp_socket *socket, char const *fmt, ...);
+void utp_context_log_unchecked(utp_context *ctx, utp_socket *socket, char const *fmt, ...);
+bool utp_context_would_log(utp_context *ctx, int level);
 
 #endif //__UTP_INTERNAL_H__
