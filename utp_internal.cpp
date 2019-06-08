@@ -771,7 +771,7 @@ void UTPSocket::send_data(byte* b, size_t length, bandwidth_type_t type, uint32 
 void UTPSocket::send_ack(bool synack)
 {
 	PacketFormatAckV1 pfa;
-	zeromem(&pfa);
+	memset(&pfa, 0, sizeof(pfa));
 
 	size_t len;
 	last_rcv_win = get_rcv_window();
@@ -847,7 +847,7 @@ void UTPSocket::send_rst(utp_context *ctx,
 	const PackedSockAddr &addr, uint32 conn_id_send, uint16 ack_nr, uint16 seq_nr)
 {
 	PacketFormatV1 pf1;
-	zeromem(&pf1);
+	memset(&pf1, 0, sizeof(pf1));
 
 	size_t len;
 	pf1.set_version(1);

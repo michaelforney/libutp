@@ -87,8 +87,6 @@ typedef big_endian<uint16> uint16_big;
 	#pragma pack(pop)
 #endif
 
-template<typename T> static inline void zeromem(T *a, size_t count = 1) { memset(a, 0, count * sizeof(T)); }
-
 typedef int SortCompareProc(const void *, const void *);
 
 template<typename T> static FORCEINLINE void QuickSortT(T *base, size_t num, int (*comp)(const T *, const T *)) { qsort(base, num, sizeof(T), (SortCompareProc*)comp); }
