@@ -32,7 +32,7 @@
 
 #include "libutp_inet_ntop.h"
 
-byte PackedSockAddr_get_family(const PackedSockAddr *addr)
+byte packed_sockaddr_get_family(const PackedSockAddr *addr)
 {
 	#if defined(__sh__)
 		return ((addr->_sin6d[0] == 0) && (addr->_sin6d[1] == 0) && (addr->_sin6d[2] == htonl(0xffff)) != 0) ?
@@ -42,7 +42,7 @@ byte PackedSockAddr_get_family(const PackedSockAddr *addr)
 	#endif // defined(__sh__)
 }
 
-bool PackedSockAddr_equal(const PackedSockAddr *lhs, const PackedSockAddr *rhs)
+bool packed_sockaddr_equal(const PackedSockAddr *lhs, const PackedSockAddr *rhs)
 {
 	if (lhs == rhs)
 		return true;
@@ -51,7 +51,7 @@ bool PackedSockAddr_equal(const PackedSockAddr *lhs, const PackedSockAddr *rhs)
 	return memcmp(lhs->_sin6, rhs->_sin6, sizeof(lhs->_sin6)) == 0;
 }
 
-void PackedSockAddr_set(PackedSockAddr *addr, const SOCKADDR_STORAGE* sa, socklen_t len)
+void packed_sockaddr_set(PackedSockAddr *addr, const SOCKADDR_STORAGE* sa, socklen_t len)
 {
 	if (sa->ss_family == AF_INET) {
 		assert(len >= sizeof(struct sockaddr_in));
@@ -72,10 +72,10 @@ void PackedSockAddr_set(PackedSockAddr *addr, const SOCKADDR_STORAGE* sa, sockle
 	}
 }
 
-SOCKADDR_STORAGE PackedSockAddr_get_sockaddr_storage(const PackedSockAddr *addr, socklen_t *len)
+SOCKADDR_STORAGE packed_sockaddr_get_sockaddr_storage(const PackedSockAddr *addr, socklen_t *len)
 {
 	SOCKADDR_STORAGE sa;
-	const byte family = PackedSockAddr_get_family(addr);
+	const byte family = packed_sockaddr_get_family(addr);
 	if (family == AF_INET) {
 		struct sockaddr_in *sin = (struct sockaddr_in*)&sa;
 		if (len) *len = sizeof(struct sockaddr_in);
@@ -95,10 +95,10 @@ SOCKADDR_STORAGE PackedSockAddr_get_sockaddr_storage(const PackedSockAddr *addr,
 }
 
 // #define addrfmt(x, s) x.fmt(s, sizeof(s))
-cstr PackedSockAddr_fmt(const PackedSockAddr *addr, str s, size_t len)
+cstr packed_sockaddr_fmt(const PackedSockAddr *addr, str s, size_t len)
 {
 	memset(s, 0, len);
-	const byte family = PackedSockAddr_get_family(addr);
+	const byte family = packed_sockaddr_get_family(addr);
 	str i;
 	if (family == AF_INET) {
 		INET_NTOP(family, (uint32*)&addr->_sin4, s, len);

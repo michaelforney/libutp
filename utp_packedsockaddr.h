@@ -50,14 +50,14 @@ struct PACKED_ATTRIBUTE PackedSockAddr {
 
 } ALIGNED_ATTRIBUTE(4);
 
-byte PackedSockAddr_get_family(const PackedSockAddr *addr);
+byte packed_sockaddr_get_family(const PackedSockAddr *addr);
 
-bool PackedSockAddr_equal(const PackedSockAddr *lhs, const PackedSockAddr *rhs);
-void PackedSockAddr_set(PackedSockAddr *addr, const SOCKADDR_STORAGE *sa, socklen_t len);
+bool packed_sockaddr_equal(const PackedSockAddr *lhs, const PackedSockAddr *rhs);
+void packed_sockaddr_set(PackedSockAddr *addr, const SOCKADDR_STORAGE *sa, socklen_t len);
 
-SOCKADDR_STORAGE PackedSockAddr_get_sockaddr_storage(const PackedSockAddr *addr, socklen_t *len);
+SOCKADDR_STORAGE packed_sockaddr_get_sockaddr_storage(const PackedSockAddr *addr, socklen_t *len);
 
-cstr PackedSockAddr_fmt(const PackedSockAddr *addr, str s, size_t len);
+cstr packed_sockaddr_fmt(const PackedSockAddr *addr, str s, size_t len);
 
 #ifdef __cplusplus
 }
