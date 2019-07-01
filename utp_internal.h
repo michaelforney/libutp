@@ -34,10 +34,6 @@
 #include "utp_hash.h"
 #include "utp_packedsockaddr.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /* These originally lived in utp_config.h */
 #define CCONTROL_TARGET (100 * 1000) // us
 
@@ -123,9 +119,5 @@ struct struct_utp_context {
 void utp_context_log(utp_context *ctx, int level, utp_socket *socket, char const *fmt, ...);
 void utp_context_log_unchecked(utp_context *ctx, utp_socket *socket, char const *fmt, ...);
 bool utp_context_would_log(utp_context *ctx, int level);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif //__UTP_INTERNAL_H__

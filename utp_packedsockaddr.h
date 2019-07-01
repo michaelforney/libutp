@@ -25,10 +25,6 @@
 
 #include "utp_types.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 typedef struct PackedSockAddr PackedSockAddr;
 struct PACKED_ATTRIBUTE PackedSockAddr {
 	// The values are always stored here in network byte order
@@ -58,9 +54,5 @@ void packed_sockaddr_set(PackedSockAddr *addr, const SOCKADDR_STORAGE *sa, sockl
 SOCKADDR_STORAGE packed_sockaddr_get_sockaddr_storage(const PackedSockAddr *addr, socklen_t *len);
 
 cstr packed_sockaddr_fmt(const PackedSockAddr *addr, str s, size_t len);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif //__UTP_PACKEDSOCKADDR_H__
