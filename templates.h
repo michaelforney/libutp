@@ -36,17 +36,19 @@
 #undef min
 #undef max
 
-template <typename T> static inline T min(T a, T b) { if (a < b) return a; return b; }
-template <typename T> static inline T max(T a, T b) { if (a > b) return a; return b; }
+#define min(a, b) ({ \
+	__typeof__(a) a_ = (a); \
+	__typeof__(b) b_ = (b); \
+	(void)(&a_ == &b_); \
+	a_ < b_ ? a_ : b_; \
+})
 
-template <typename T> static inline T min(T a, T b, T c) { return min(min(a,b),c); }
-template <typename T> static inline T max(T a, T b, T c) { return max(max(a,b),c); }
-template <typename T> static inline T clamp(T v, T mi, T ma)
-{
-	if (v > ma) v = ma;
-	if (v < mi) v = mi;
-	return v;
-}
+#define max(a, b) ({ \
+	__typeof__(a) a_ = (a); \
+	__typeof__(b) b_ = (b); \
+	(void)(&a_ == &b_); \
+	a_ > b_ ? a_ : b_; \
+})
 
 #if (defined(__SVR4) && defined(__sun))
 #pragma pack(1)
@@ -95,7 +97,7 @@ public:
 		else { mem = (T*)realloc(mem, (alloc=a) * sizeof(T)); }
 	}
 
-	void Grow() { Resize(::max<size_t>(minsize, alloc * 2)); }
+	void Grow() { Resize(max(minsize, alloc * 2)); }
 
 	inline size_t Append(const T &t) {
 		if (count >= alloc) Grow();

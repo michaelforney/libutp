@@ -549,7 +549,7 @@ struct DelayHist {
 	{
 		uint32_t value = UINT_MAX;
 		for (size_t i = 0; i < CUR_DELAY_SIZE; i++) {
-			value = min<uint32_t>(cur_delay_hist[i], value);
+			value = min(cur_delay_hist[i], value);
 		}
 		// value could be UINT_MAX if we have no samples yet...
 		return value;
@@ -919,7 +919,7 @@ void UTPSocket::send_ack(bool synack)
 		// if the packet ack_nr + 1 has not yet
 		// been received
 		assert(inbuf.get(ack_nr + 1) == NULL);
-		size_t window = min<size_t>(14+16, inbuf.size());
+		size_t window = min((size_t)14+16, inbuf.size());
 		// Generate bit mask of segments received.
 		for (size_t i = 0; i < window; i++) {
 			if (inbuf.get(ack_nr + i + 2) != NULL) {
@@ -1011,7 +1011,7 @@ void UTPSocket::send_packet(OutgoingPacket *pkt)
 	// send the packet. Don't enforce quota when closing
 	// a socket. Only enforce the quota when we're sending
 	// at slow rates (max window < packet size)
-	size_t max_send = min(max_window, opt_sndbuf, max_window_user);
+	size_t max_send = min(min(max_window, opt_sndbuf), max_window_user);
 
 	if (pkt->transmissions == 0 || pkt->need_resend) {
 		cur_window += pkt->payload;
@@ -1049,7 +1049,7 @@ bool UTPSocket::is_writable(size_t to_write)
 	// might not actually send the packet right away to affect the
 	// cur_window. The only thing that happens when we add another
 	// packet is that cur_window_packets is increased.
-	size_t max_send = min(max_window, opt_sndbuf, max_window_user);
+	size_t max_send = min(min(max_window, opt_sndbuf), max_window_user);
 
 	size_t packet_size = get_packet_size();
 
@@ -1147,7 +1147,7 @@ void UTPSocket::write_outgoing_packet(size_t payload, uint flags)
 		// and it hasn't been sent yet, fill that frame first
 		if (payload && pkt && !pkt->transmissions && pkt->payload < packet_size) {
 			// Use the previous unsent packet
-			added = min(payload + pkt->payload, max<size_t>(packet_size, pkt->payload)) - pkt->payload;
+			added = min(payload + pkt->payload, max(packet_size, pkt->payload)) - pkt->payload;
 			pkt = (OutgoingPacket*)realloc(pkt,
 										   (sizeof(OutgoingPacket) - 1) +
 										   header_size +
@@ -1317,7 +1317,7 @@ void UTPSocket::check_timeouts()
 
 			// rate = min_rate
 			max_window = get_packet_size();
-			send_quota = max<int32_t>((int32_t)max_window * 100, send_quota);
+			send_quota = max((int32_t)max_window * 100, send_quota);
 
 			// every packet should be considered lost
 			for (int i = 0; i < cur_window_packets; ++i) {
@@ -1338,7 +1338,7 @@ void UTPSocket::check_timeouts()
 			if (cur_window_packets > 0) {
 				OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(seq_nr - cur_window_packets);
 				assert(pkt);
-				send_quota = max<int32_t>((int32_t)pkt->length * 100, send_quota);
+				send_quota = max((int32_t)pkt->length * 100, send_quota);
 
 				// Re-send the packet.
 				send_packet(pkt);
@@ -1389,7 +1389,7 @@ void UTPSocket::check_timeouts()
 
 	// make sure we don't accumulate quota when we don't have
 	// anything to send
-	int32_t limit = max<int32_t>((int32_t)max_window / 2, 5 * (int32_t)get_packet_size()) * 100;
+	int32_t limit = max((int32_t)max_window / 2, 5 * (int32_t)get_packet_size()) * 100;
 	if (send_quota > limit) send_quota = limit;
 }
 
@@ -1438,7 +1438,7 @@ int UTPSocket::ack_packet(uint16_t seq)
 //			assert(rtt < 6000);
 			rtt_hist.add_sample(ertt);
 		}
-		rto = max<uint>(rtt + rtt_var * 4, 500);
+		rto = max(rtt + rtt_var * 4, 500u);
 		LOG_UTPV("0x%08x: rtt:%u avg:%u var:%u rto:%u",
 				 this, ertt, rtt, rtt_var, rto);
 	}
@@ -1481,7 +1481,7 @@ size_t UTPSocket::selective_ack_bytes(uint base, const unsigned char* mask, unsi
 		if (bits >= 0 && mask[bits>>3] & (1 << (bits & 7))) {
 			assert((int)(pkt->payload) >= 0);
 			acked_bytes += pkt->payload;
-			min_rtt = min<int64_t>(min_rtt, UTP_GetMicroseconds() - pkt->time_sent);
+			min_rtt = min(min_rtt, (int64_t)(UTP_GetMicroseconds() - pkt->time_sent));
 			continue;
 		}
 	} while (--bits >= -1);
@@ -1641,7 +1641,7 @@ void UTPSocket::apply_ledbat_ccontrol(size_t bytes_acked, uint32_t actual_delay,
 	// variable is the RTT in microseconds
 	
 	assert(min_rtt >= 0);
-	int32_t our_delay = min<uint32_t>(our_hist.get_value(), uint32_t(min_rtt));
+	int32_t our_delay = min(our_hist.get_value(), uint32_t(min_rtt));
 	assert(our_delay != INT_MAX);
 	assert(our_delay >= 0);
 
@@ -1701,7 +1701,10 @@ void UTPSocket::apply_ledbat_ccontrol(size_t bytes_acked, uint32_t actual_delay,
 
 	// make sure that the congestion window is below max
 	// make sure that we don't shrink our window too small
-	max_window = clamp<size_t>(max_window, MIN_WINDOW_SIZE, opt_sndbuf);
+	if (max_window > opt_sndbuf)
+		max_window = opt_sndbuf;
+	if (max_window < MIN_WINDOW_SIZE)
+		max_window = MIN_WINDOW_SIZE;
 
 	// used in parse_log.py
 	LOG_UTP("0x%08x: actual_delay:%u our_delay:%d their_delay:%u off_target:%d max_window:%u "
@@ -1867,7 +1870,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 	// Getting an invalid sequence number?
 	if (seqnr >= REORDER_BUFFER_MAX_SIZE) {
 		if (seqnr >= (SEQ_NR_MASK + 1) - REORDER_BUFFER_MAX_SIZE && pk_flags != ST_STATE) {
-			conn->ack_time = g_current_ms + min<uint>(conn->ack_time - g_current_ms, DELAYED_ACK_TIME_THRESHOLD);
+			conn->ack_time = g_current_ms + min(conn->ack_time - g_current_ms, (unsigned)DELAYED_ACK_TIME_THRESHOLD);
 		}
 		LOG_UTPV("    Got old Packet/Ack (%u/%u)=%u!", pk_seq_nr, conn->ack_nr, seqnr);
 		return 0;
@@ -1912,7 +1915,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 		if (pkt == 0 || pkt->transmissions == 0) continue;
 		assert((int)(pkt->payload) >= 0);
 		acked_bytes += pkt->payload;
-		min_rtt = min<int64_t>(min_rtt, UTP_GetMicroseconds() - pkt->time_sent);
+		min_rtt = min(min_rtt, (int64_t)(UTP_GetMicroseconds() - pkt->time_sent));
 	}
 	
 	// count bytes acked by EACK
@@ -2168,7 +2171,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 			if (conn->got_fin && conn->eof_pkt == conn->ack_nr) {
 				if (conn->state != CS_FIN_SENT) {
 					conn->state = CS_GOT_FIN;
-					conn->rto_timeout = g_current_ms + min<uint>(conn->rto * 3, 60);
+					conn->rto_timeout = g_current_ms + min(conn->rto * 3, 60u);
 
 					LOG_UTPV("0x%08x: Posting EOF", conn);
 					conn->func.on_state(conn->userdata, UTP_STATE_EOF);
@@ -2211,7 +2214,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 		}
 
 		// start the delayed ACK timer
-		conn->ack_time = g_current_ms + min<uint>(conn->ack_time - g_current_ms, DELAYED_ACK_TIME_THRESHOLD);
+		conn->ack_time = g_current_ms + min(conn->ack_time - g_current_ms, (unsigned)DELAYED_ACK_TIME_THRESHOLD);
 	} else {
 		// Getting an out of order packet.
 		// The packet needs to be remembered and rearranged later.
@@ -2272,7 +2275,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 			conn, conn->reorder_count, (uint)(packet_end - data), (uint)conn->func.get_rb_size(conn->userdata));
 
 		// Setup so the partial ACK message will get sent immediately.
-		conn->ack_time = g_current_ms + min<uint>(conn->ack_time - g_current_ms, 1);
+		conn->ack_time = g_current_ms + min(conn->ack_time - g_current_ms, 1u);
 	}
 
 	// If ack_time or ack_bytes indicate that we need to send and ack, send one
@@ -2729,7 +2732,7 @@ bool UTP_Write(UTPSocket *conn, size_t bytes)
 
 	// don't send unless it will all fit in the window
 	size_t packet_size = conn->get_packet_size();
-	size_t num_to_send = min<size_t>(bytes, packet_size);
+	size_t num_to_send = min(bytes, packet_size);
 	while (conn->is_writable(num_to_send)) {
 		// Send an outgoing packet.
 		// Also add it to the outgoing of packets that have been sent but not ACKed.
@@ -2747,7 +2750,7 @@ bool UTP_Write(UTPSocket *conn, size_t bytes)
 				 (uint)conn->last_rcv_win, num_to_send, conn->send_quota / 100,
 				 conn->cur_window_packets);
 		conn->write_outgoing_packet(num_to_send, ST_DATA);
-		num_to_send = min<size_t>(bytes, packet_size);
+		num_to_send = min(bytes, packet_size);
 	}
 
 	// mark the socket as not being writable.
@@ -2767,7 +2770,7 @@ void UTP_RBDrained(UTPSocket *conn)
 		if (conn->last_rcv_win == 0) {
 			conn->send_ack();
 		} else {
-			conn->ack_time = g_current_ms + min<uint>(conn->ack_time - g_current_ms, DELAYED_ACK_TIME_THRESHOLD);
+			conn->ack_time = g_current_ms + min(conn->ack_time - g_current_ms, (unsigned)DELAYED_ACK_TIME_THRESHOLD);
 		}
 	}
 }
@@ -2856,7 +2859,7 @@ void UTP_Close(UTPSocket *conn)
 		break;
 
 	case CS_SYN_SENT:
-		conn->rto_timeout = UTP_GetMilliseconds() + min<uint>(conn->rto * 2, 60);
+		conn->rto_timeout = UTP_GetMilliseconds() + min(conn->rto * 2, 60u);
 	case CS_GOT_FIN:
 		conn->state = CS_DESTROY_DELAY;
 		break;
