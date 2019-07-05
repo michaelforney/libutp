@@ -91,7 +91,7 @@ uint32_t g_current_ms;
 //   1: Terminating null byte
 char addrbuf[65];
 char addrbuf2[65];
-#define addrfmt(x, s) x.fmt(s, sizeof(s))
+#define addrfmt(x, s) packedsockaddr_fmt(&x, s, sizeof(s))
 
 #if (defined(__SVR4) && defined(__sun))
 #pragma pack(1)
@@ -117,85 +117,85 @@ struct PACKED_ATTRIBUTE PackedSockAddr {
 #define _sin6 _in._in6
 #define _sin6w _in._in6w
 #define _sin6d _in._in6d
-
-	unsigned char get_family() const
-	{
-		return (IN6_IS_ADDR_V4MAPPED(&_in._in6addr) != 0) ? AF_INET : AF_INET6;
-	}
-
-	bool operator==(const PackedSockAddr& rhs) const
-	{
-		if (&rhs == this)
-			return true;
-		if (_port != rhs._port)
-			return false;
-		return memcmp(_sin6, rhs._sin6, sizeof(_sin6)) == 0;
-	}
-	bool operator!=(const PackedSockAddr& rhs) const { return !(*this == rhs); }
-
-	PackedSockAddr(const SOCKADDR_STORAGE* sa, socklen_t len)
-	{
-		if (sa->ss_family == AF_INET) {
-			assert(len >= sizeof(struct sockaddr_in));
-			const struct sockaddr_in *sin = (struct sockaddr_in *)sa;
-			_sin6w[0] = 0;
-			_sin6w[1] = 0;
-			_sin6w[2] = 0;
-			_sin6w[3] = 0;
-			_sin6w[4] = 0;
-			_sin6w[5] = 0xffff;
-			_sin4 = sin->sin_addr.s_addr;
-			_port = ntohs(sin->sin_port);
-		} else {
-			assert(len >= sizeof(struct sockaddr_in6));
-			const struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)sa;
-			_in._in6addr = sin6->sin6_addr;
-			_port = ntohs(sin6->sin6_port);
-		}
-	}
-
-	SOCKADDR_STORAGE get_sockaddr_storage(socklen_t *len = NULL) const
-	{
-		SOCKADDR_STORAGE sa;
-		const unsigned char family = get_family();
-		if (family == AF_INET) {
-			struct sockaddr_in *sin = (struct sockaddr_in *)&sa;
-			if (len) *len = sizeof(struct sockaddr_in);
-			memset(sin, 0, sizeof(struct sockaddr_in));
-			sin->sin_family = family;
-			sin->sin_port = htons(_port);
-			sin->sin_addr.s_addr = _sin4;
-		} else {
-			struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&sa;
-			memset(sin6, 0, sizeof(struct sockaddr_in6));
-			if (len) *len = sizeof(struct sockaddr_in6);
-			sin6->sin6_family = family;
-			sin6->sin6_addr = _in._in6addr;
-			sin6->sin6_port = htons(_port);
-		}
-		return sa;
-	}
-
-	const char *fmt(char *s, size_t len) const
-	{
-		memset(s, 0, len);
-		const unsigned char family = get_family();
-		char *i;
-		if (family == AF_INET) {
-			inet_ntop(family, (uint32_t*)&_sin4, s, len);
-			i = s;
-			while (*++i) {}
-		} else {
-			i = s;
-			*i++ = '[';
-			inet_ntop(family, (struct in6_addr *)&_in._in6addr, i, len-1);
-			while (*++i) {}
-			*i++ = ']';
-		}
-		snprintf(i, len - (i-s), ":%u", _port);
-		return s;
-	}
 } ALIGNED_ATTRIBUTE(4);
+typedef struct PackedSockAddr PackedSockAddr;
+
+unsigned char packedsockaddr_get_family(const PackedSockAddr *addr)
+{
+	return (IN6_IS_ADDR_V4MAPPED(&addr->_in._in6addr) != 0) ? AF_INET : AF_INET6;
+}
+
+bool packedsockaddr_equal(const PackedSockAddr *lhs, const PackedSockAddr *rhs)
+{
+	if (lhs == rhs)
+		return true;
+	if (lhs->_port != rhs->_port)
+		return false;
+	return memcmp(lhs->_sin6, rhs->_sin6, sizeof(lhs->_sin6)) == 0;
+}
+
+void packedsockaddr_set(PackedSockAddr *addr, const SOCKADDR_STORAGE* sa, socklen_t len)
+{
+	if (sa->ss_family == AF_INET) {
+		assert(len >= sizeof(struct sockaddr_in));
+		const struct sockaddr_in *sin = (struct sockaddr_in *)sa;
+		addr->_sin6w[0] = 0;
+		addr->_sin6w[1] = 0;
+		addr->_sin6w[2] = 0;
+		addr->_sin6w[3] = 0;
+		addr->_sin6w[4] = 0;
+		addr->_sin6w[5] = 0xffff;
+		addr->_sin4 = sin->sin_addr.s_addr;
+		addr->_port = ntohs(sin->sin_port);
+	} else {
+		assert(len >= sizeof(struct sockaddr_in6));
+		const struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)sa;
+		addr->_in._in6addr = sin6->sin6_addr;
+		addr->_port = ntohs(sin6->sin6_port);
+	}
+}
+
+SOCKADDR_STORAGE packedsockaddr_get_sockaddr_storage(const PackedSockAddr *addr, socklen_t *len)
+{
+	SOCKADDR_STORAGE sa;
+	const unsigned char family = packedsockaddr_get_family(addr);
+	if (family == AF_INET) {
+		struct sockaddr_in *sin = (struct sockaddr_in *)&sa;
+		if (len) *len = sizeof(struct sockaddr_in);
+		memset(sin, 0, sizeof(struct sockaddr_in));
+		sin->sin_family = family;
+		sin->sin_port = htons(addr->_port);
+		sin->sin_addr.s_addr = addr->_sin4;
+	} else {
+		struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&sa;
+		memset(sin6, 0, sizeof(struct sockaddr_in6));
+		if (len) *len = sizeof(struct sockaddr_in6);
+		sin6->sin6_family = family;
+		sin6->sin6_addr = addr->_in._in6addr;
+		sin6->sin6_port = htons(addr->_port);
+	}
+	return sa;
+}
+
+const char *packedsockaddr_fmt(const PackedSockAddr *addr, char *s, size_t len)
+{
+	memset(s, 0, len);
+	const unsigned char family = packedsockaddr_get_family(addr);
+	char *i;
+	if (family == AF_INET) {
+		inet_ntop(family, (uint32_t*)&addr->_sin4, s, len);
+		i = s;
+		while (*++i) {}
+	} else {
+		i = s;
+		*i++ = '[';
+		inet_ntop(family, (struct in6_addr*)&addr->_in._in6addr, i, len-1);
+		while (*++i) {}
+		*i++ = ']';
+	}
+	snprintf(i, len - (i-s), ":%u", addr->_port);
+	return s;
+}
 
 struct PACKED_ATTRIBUTE RST_Info {
 	PackedSockAddr addr;
@@ -741,21 +741,21 @@ struct UTPSocket {
 	size_t get_udp_mtu() const
 	{
 		socklen_t len;
-		SOCKADDR_STORAGE sa = addr.get_sockaddr_storage(&len);
+		SOCKADDR_STORAGE sa = packedsockaddr_get_sockaddr_storage(&addr, &len);
 		return UTP_GetUDPMTU((const struct sockaddr *)&sa, len);
 	}
 
 	size_t get_udp_overhead() const
 	{
 		socklen_t len;
-		SOCKADDR_STORAGE sa = addr.get_sockaddr_storage(&len);
+		SOCKADDR_STORAGE sa = packedsockaddr_get_sockaddr_storage(&addr, &len);
 		return UTP_GetUDPOverhead((const struct sockaddr *)&sa, len);
 	}
 
 	uint64_t get_global_utp_bytes_sent() const
 	{
 		socklen_t len;
-		SOCKADDR_STORAGE sa = addr.get_sockaddr_storage(&len);
+		SOCKADDR_STORAGE sa = packedsockaddr_get_sockaddr_storage(&addr, &len);
 		return UTP_GetGlobalUTPBytesSent((const struct sockaddr *)&sa, len);
 	}
 
@@ -827,7 +827,7 @@ static void UTP_RegisterSentPacket(size_t length) {
 void send_to_addr(SendToProc *send_to_proc, void *send_to_userdata, const unsigned char *p, size_t len, const PackedSockAddr &addr)
 {
 	socklen_t tolen;
-	SOCKADDR_STORAGE to = addr.get_sockaddr_storage(&tolen);
+	SOCKADDR_STORAGE to = packedsockaddr_get_sockaddr_storage(&addr, &tolen);
 	UTP_RegisterSentPacket(len);
 	send_to_proc(send_to_userdata, p, len, (const struct sockaddr *)&to, tolen);
 }
@@ -1656,7 +1656,7 @@ void UTPSocket::apply_ledbat_ccontrol(size_t bytes_acked, uint32_t actual_delay,
 	assert(our_delay != INT_MAX);
 	assert(our_delay >= 0);
 
-	SOCKADDR_STORAGE sa = addr.get_sockaddr_storage();
+	SOCKADDR_STORAGE sa = packedsockaddr_get_sockaddr_storage(&addr, NULL);
 	UTP_DelaySample((struct sockaddr *)&sa, our_delay / 1000);
 
 	// This test the connection under heavy load from foreground
@@ -1765,7 +1765,7 @@ size_t UTPSocket::get_packet_size()
 	size_t mtu = get_udp_mtu();
 
 	if (DYNAMIC_PACKET_SIZE_ENABLED) {
-		SOCKADDR_STORAGE sa = addr.get_sockaddr_storage();
+		SOCKADDR_STORAGE sa = packedsockaddr_get_sockaddr_storage(&addr, NULL);
 		size_t max_packet_size = UTP_GetPacketSizeForAddr((struct sockaddr *)&sa);
 		return min(mtu - header_size, max_packet_size);
 	}
@@ -2365,7 +2365,7 @@ UTPSocket *UTP_Create(SendToProc *send_to_proc, void *send_to_userdata, const st
 	conn->seq_nr = 1;
 	conn->ack_nr = 0;
 	conn->max_window_user = 255 * PACKET_SIZE;
-	conn->addr = PackedSockAddr((const SOCKADDR_STORAGE*)addr, addrlen);
+	packedsockaddr_set(&conn->addr, (const SOCKADDR_STORAGE*)addr, addrlen);
 	conn->send_to_proc = send_to_proc;
 	conn->send_to_userdata = send_to_userdata;
 	conn->ack_time = g_current_ms + 0x70000000;
@@ -2543,7 +2543,8 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 					   SendToProc *send_to_proc, void *send_to_userdata,
 					   const unsigned char *buffer, size_t len, const struct sockaddr *to, socklen_t tolen)
 {
-	const PackedSockAddr addr((const SOCKADDR_STORAGE*)to, tolen);
+	PackedSockAddr addr;
+	packedsockaddr_set(&addr, (const SOCKADDR_STORAGE*)to, tolen);
 
 	if (len < sizeof(PacketFormat) && len < sizeof(PacketFormatV1)) {
 		LOG_UTPV("recv %s len:%u too small", addrfmt(addr, addrbuf), (uint)len);
@@ -2583,7 +2584,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 		UTPSocket *conn = g_utp_sockets[i];
 		//LOG_UTPV("Examining UTPSocket %s for %s and (seed:%u s:%u r:%u) for %u",
 		//		addrfmt(conn->addr, addrbuf), addrfmt(addr, addrbuf2), conn->conn_seed, conn->conn_id_send, conn->conn_id_recv, id);
-		if (conn->addr != addr)
+		if (!packedsockaddr_equal(&conn->addr, &addr))
 			continue;
 
 		if (flags == ST_RESET && (conn->conn_id_send == id || conn->conn_id_recv == id)) {
@@ -2624,7 +2625,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 		for (size_t i = 0; i < g_rst_info_count; i++) {
 			if (g_rst_info[i].connid != id)
 				continue;
-			if (g_rst_info[i].addr != addr)
+			if (!packedsockaddr_equal(&g_rst_info[i].addr, &addr))
 				continue;
 			if (seq_nr != g_rst_info[i].ack_nr)
 				continue;
@@ -2692,7 +2693,8 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 
 bool UTP_HandleICMP(const unsigned char* buffer, size_t len, const struct sockaddr *to, socklen_t tolen)
 {
-	const PackedSockAddr addr((const SOCKADDR_STORAGE*)to, tolen);
+	PackedSockAddr addr;
+	packedsockaddr_set(&addr, (const SOCKADDR_STORAGE*)to, tolen);
 
 	// Want the whole packet so we have connection ID
 	if (len < sizeof(PacketFormat)) {
@@ -2707,7 +2709,7 @@ bool UTP_HandleICMP(const unsigned char* buffer, size_t len, const struct sockad
 
 	for (size_t i = 0; i < g_utp_sockets_count; ++i) {
 		UTPSocket *conn = g_utp_sockets[i];
-		if (conn->addr == addr &&
+		if (packedsockaddr_equal(&conn->addr, &addr) &&
 			conn->conn_id_recv == id) {
 			// Don't pass on errors for idle/closed connections
 			if (conn->state != CS_IDLE) {
@@ -2836,7 +2838,7 @@ void UTP_GetPeerName(UTPSocket *conn, struct sockaddr *addr, socklen_t *addrlen)
 	assert(conn);
 
 	socklen_t len;
-	const SOCKADDR_STORAGE sa = conn->addr.get_sockaddr_storage(&len);
+	const SOCKADDR_STORAGE sa = packedsockaddr_get_sockaddr_storage(&conn->addr, &len);
 	*addrlen = min(len, *addrlen);
 	memcpy(addr, &sa, *addrlen);
 }
