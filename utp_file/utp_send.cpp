@@ -100,7 +100,7 @@ UDPSocketManager::UDPSocketManager()
 }
 
 // Send a message on the actual UDP socket
-void UDPSocketManager::Send(const byte *p, size_t len, const struct sockaddr *to, socklen_t tolen)
+void UDPSocketManager::Send(const unsigned char *p, size_t len, const struct sockaddr *to, socklen_t tolen)
 {
 	assert(len <= UTP_GetUDPMTU(to, tolen));
 
@@ -189,7 +189,7 @@ void UDPSocketManager::set_socket(SOCKET s)
 	_socket = s;
 }
 
-void send_to(void *userdata, const byte *p, size_t len, const struct sockaddr *to, socklen_t tolen)
+void send_to(void *userdata, const unsigned char *p, size_t len, const struct sockaddr *to, socklen_t tolen)
 {
 	((UDPSocketManager*)userdata)->Send(p, len, to, tolen);
 }
@@ -214,7 +214,7 @@ void UDPSocketManager::select(int microsec)
 	Flush();
 
 	if (FD_ISSET(_socket, &r)) {
-		byte buffer[8192];
+		unsigned char buffer[8192];
 		SOCKADDR_STORAGE sa;
 		socklen_t salen = sizeof(sa);
 
@@ -248,14 +248,14 @@ void UDPSocketManager::select(int microsec)
 
 }
 
-void utp_read(void* socket, const byte* bytes, size_t count)
+void utp_read(void* socket, const unsigned char *bytes, size_t count)
 {
 	assert(utp_socket == socket);
 	printf("utp on_read %u\n", count);
 	assert(false);
 }
 
-void utp_write(void* socket, byte* bytes, size_t count)
+void utp_write(void* socket, unsigned char *bytes, size_t count)
 {
 	assert(utp_socket == socket);
 	const size_t read = fread(bytes, 1, count, file);

@@ -10,7 +10,7 @@
 #else
 #warning implement this in libtransmission
 #endif
-uint64 UTP_GetGlobalUTPBytesSent(const struct sockaddr *remote, socklen_t remotelen) { return 0; }
+uint64_t UTP_GetGlobalUTPBytesSent(const struct sockaddr *remote, socklen_t remotelen) { return 0; }
 
 enum bandwidth_type_t {
 	payload_bandwidth, connect_overhead,

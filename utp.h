@@ -1,8 +1,6 @@
 #ifndef __UTP_H__
 #define __UTP_H__
 
-#include "utypes.h"
-
 #ifdef WIN32
 #ifndef _CRT_SECURE_NO_DEPRECATE
 #define _CRT_SECURE_NO_DEPRECATE
@@ -17,6 +15,7 @@
 #pragma comment(lib,"ws2_32.lib")
 #endif
 #else
+#include <stdbool.h>
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -54,11 +53,11 @@ enum {
 // Callbacks called by a uTP socket (register with UTP_SetCallbacks)
 
 // The uTP socket layer calls this when bytes have been received from the network.
-typedef void UTPOnReadProc(void *userdata, const byte *bytes, size_t count);
+typedef void UTPOnReadProc(void *userdata, const unsigned char *bytes, size_t count);
 
 // The uTP socket layer calls this to fill the outgoing buffer with bytes.
 // The uTP layer takes responsibility that those bytes will be delivered.
-typedef void UTPOnWriteProc(void *userdata, byte *bytes, size_t count);
+typedef void UTPOnWriteProc(void *userdata, unsigned char *bytes, size_t count);
 
 // The uTP socket layer calls this to retrieve number of bytes currently in read buffer
 typedef size_t UTPGetRBSize(void *userdata);
@@ -89,7 +88,7 @@ struct UTPFunctionTable {
 typedef void UTPGotIncomingConnection(void *userdata, struct UTPSocket* s);
 
 // The uTP socket layer calls this to send UDP packets
-typedef void SendToProc(void *userdata, const byte *p, size_t len, const struct sockaddr *to, socklen_t tolen);
+typedef void SendToProc(void *userdata, const unsigned char *p, size_t len, const struct sockaddr *to, socklen_t tolen);
 
 
 // Functions which can be called with a uTP socket
@@ -112,10 +111,10 @@ void UTP_Connect(struct UTPSocket *socket);
 // in some way, false if the packet did not appear to be uTP.
 bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 					   SendToProc *send_to_proc, void *send_to_userdata,
-					   const byte *buffer, size_t len, const struct sockaddr *to, socklen_t tolen);
+					   const unsigned char *buffer, size_t len, const struct sockaddr *to, socklen_t tolen);
 
 // Process an ICMP received UDP packet.
-bool UTP_HandleICMP(const byte* buffer, size_t len, const struct sockaddr *to, socklen_t tolen);
+bool UTP_HandleICMP(const unsigned char* buffer, size_t len, const struct sockaddr *to, socklen_t tolen);
 
 // Write bytes to the uTP socket.
 // Returns true if the socket is still writable.
@@ -132,19 +131,19 @@ void UTP_CheckTimeouts(void);
 // address in the object pointed to by the addrlen argument.
 void UTP_GetPeerName(struct UTPSocket *socket, struct sockaddr *addr, socklen_t *addrlen);
 
-void UTP_GetDelays(struct UTPSocket *socket, int32 *ours, int32 *theirs, uint32 *age);
+void UTP_GetDelays(struct UTPSocket *socket, int32_t *ours, int32_t *theirs, uint32_t *age);
 
 size_t UTP_GetPacketSize(struct UTPSocket *socket);
 
 #ifdef _DEBUG
 struct UTPStats {
-	uint64 _nbytes_recv;	// total bytes received
-	uint64 _nbytes_xmit;	// total bytes transmitted
-	uint32 _rexmit;		// retransmit counter
-	uint32 _fastrexmit;	// fast retransmit counter
-	uint32 _nxmit;		// transmit counter
-	uint32 _nrecv;		// receive counter (total)
-	uint32 _nduprecv;	// duplicate receive counter
+	uint64_t _nbytes_recv;	// total bytes received
+	uint64_t _nbytes_xmit;	// total bytes transmitted
+	uint32_t _rexmit;		// retransmit counter
+	uint32_t _fastrexmit;	// fast retransmit counter
+	uint32_t _nxmit;		// transmit counter
+	uint32_t _nrecv;		// receive counter (total)
+	uint32_t _nduprecv;	// duplicate receive counter
 };
 
 // Get stats for UTP socket
@@ -158,8 +157,8 @@ void UTP_GetStats(struct UTPSocket *socket, struct UTPStats *stats);
 void UTP_Close(struct UTPSocket *socket);
 
 struct UTPGlobalStats {
-	uint32 _nraw_recv[5];	// total packets recieved less than 300/600/1200/MTU bytes fpr all connections (global)
-	uint32 _nraw_send[5];	// total packets sent less than 300/600/1200/MTU bytes for all connections (global)
+	uint32_t _nraw_recv[5];	// total packets recieved less than 300/600/1200/MTU bytes fpr all connections (global)
+	uint32_t _nraw_send[5];	// total packets sent less than 300/600/1200/MTU bytes for all connections (global)
 };
 
 void UTP_GetGlobalStats(struct UTPGlobalStats *stats);

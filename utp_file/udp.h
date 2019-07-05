@@ -12,7 +12,7 @@
 struct UdpOutgoing {
 	SOCKADDR_STORAGE to;
 	uint len;
-	byte mem[1];
+	unsigned char mem[1];
 };
 
 // this must be a power of 2.
@@ -29,7 +29,7 @@ public:
 
 	void set_socket(SOCKET s);
 	void select(int microsec);
-	void Send(const byte *p, size_t len, const struct sockaddr *to, socklen_t tolen);
+	void Send(const unsigned char *p, size_t len, const struct sockaddr *to, socklen_t tolen);
 	void Flush();
 };
 
