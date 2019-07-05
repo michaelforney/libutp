@@ -25,7 +25,7 @@
 #endif
 
 #ifdef POSIX
-typedef sockaddr_storage SOCKADDR_STORAGE;
+typedef struct sockaddr_storage SOCKADDR_STORAGE;
 #endif // POSIX
 
 // number of bytes to increase max window size by, per RTT. This is
@@ -103,10 +103,10 @@ struct PACKED_ATTRIBUTE PackedSockAddr {
 
 	// The values are always stored here in network byte order
 	union {
-		unsigned char _in6[16];	// IPv6
-		uint16_t _in6w[8];	// IPv6, word based (for convenience)
-		uint32_t _in6d[4];	// Dword access
-		in6_addr _in6addr;	// For convenience
+		unsigned char _in6[16];		// IPv6
+		uint16_t _in6w[8];		// IPv6, word based (for convenience)
+		uint32_t _in6d[4];		// Dword access
+		struct in6_addr _in6addr;	// For convenience
 	} _in;
 
 	// Host byte order
@@ -136,8 +136,8 @@ struct PACKED_ATTRIBUTE PackedSockAddr {
 	PackedSockAddr(const SOCKADDR_STORAGE* sa, socklen_t len)
 	{
 		if (sa->ss_family == AF_INET) {
-			assert(len >= sizeof(sockaddr_in));
-			const sockaddr_in *sin = (sockaddr_in*)sa;
+			assert(len >= sizeof(struct sockaddr_in));
+			const struct sockaddr_in *sin = (struct sockaddr_in *)sa;
 			_sin6w[0] = 0;
 			_sin6w[1] = 0;
 			_sin6w[2] = 0;
@@ -147,8 +147,8 @@ struct PACKED_ATTRIBUTE PackedSockAddr {
 			_sin4 = sin->sin_addr.s_addr;
 			_port = ntohs(sin->sin_port);
 		} else {
-			assert(len >= sizeof(sockaddr_in6));
-			const sockaddr_in6 *sin6 = (sockaddr_in6*)sa;
+			assert(len >= sizeof(struct sockaddr_in6));
+			const struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)sa;
 			_in._in6addr = sin6->sin6_addr;
 			_port = ntohs(sin6->sin6_port);
 		}
@@ -159,16 +159,16 @@ struct PACKED_ATTRIBUTE PackedSockAddr {
 		SOCKADDR_STORAGE sa;
 		const unsigned char family = get_family();
 		if (family == AF_INET) {
-			sockaddr_in *sin = (sockaddr_in*)&sa;
-			if (len) *len = sizeof(sockaddr_in);
-			memset(sin, 0, sizeof(sockaddr_in));
+			struct sockaddr_in *sin = (struct sockaddr_in *)&sa;
+			if (len) *len = sizeof(struct sockaddr_in);
+			memset(sin, 0, sizeof(struct sockaddr_in));
 			sin->sin_family = family;
 			sin->sin_port = htons(_port);
 			sin->sin_addr.s_addr = _sin4;
 		} else {
-			sockaddr_in6 *sin6 = (sockaddr_in6*)&sa;
-			memset(sin6, 0, sizeof(sockaddr_in6));
-			if (len) *len = sizeof(sockaddr_in6);
+			struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&sa;
+			memset(sin6, 0, sizeof(struct sockaddr_in6));
+			if (len) *len = sizeof(struct sockaddr_in6);
 			sin6->sin6_family = family;
 			sin6->sin6_addr = _in._in6addr;
 			sin6->sin6_port = htons(_port);
@@ -188,7 +188,7 @@ struct PACKED_ATTRIBUTE PackedSockAddr {
 		} else {
 			i = s;
 			*i++ = '[';
-			inet_ntop(family, (in6_addr*)&_in._in6addr, i, len-1);
+			inet_ntop(family, (struct in6_addr *)&_in._in6addr, i, len-1);
 			while (*++i) {}
 			*i++ = ']';
 		}
@@ -203,6 +203,7 @@ struct PACKED_ATTRIBUTE RST_Info {
 	uint32_t timestamp;
 	uint16_t ack_nr;
 };
+typedef struct RST_Info RST_Info;
 
 // these packet sizes are including the uTP header wich
 // is either 20 or 23 bytes depending on version
@@ -233,6 +234,7 @@ struct PACKED_ATTRIBUTE PacketFormat {
 	// Acknowledgment number
 	uint16_big ack_nr;
 };
+typedef struct PacketFormat PacketFormat;
 
 struct PACKED_ATTRIBUTE PacketFormatAck {
 	PacketFormat pf;
@@ -240,6 +242,7 @@ struct PACKED_ATTRIBUTE PacketFormatAck {
 	unsigned char ext_len;
 	unsigned char acks[4];
 };
+typedef struct PacketFormatAck PacketFormatAck;
 
 struct PACKED_ATTRIBUTE PacketFormatExtensions {
 	PacketFormat pf;
@@ -247,6 +250,7 @@ struct PACKED_ATTRIBUTE PacketFormatExtensions {
 	unsigned char ext_len;
 	unsigned char extensions[8];
 };
+typedef struct PacketFormatExtensions PacketFormatExtensions;
 
 struct PACKED_ATTRIBUTE PacketFormatV1 {
 	// packet_type (4 high bits)
@@ -277,6 +281,7 @@ struct PACKED_ATTRIBUTE PacketFormatAckV1 {
 	unsigned char ext_len;
 	unsigned char acks[4];
 };
+typedef struct PacketFormatAckV1 PacketFormatAckV1;
 
 struct PACKED_ATTRIBUTE PacketFormatExtensionsV1 {
 	PacketFormatV1 pf;
@@ -284,6 +289,7 @@ struct PACKED_ATTRIBUTE PacketFormatExtensionsV1 {
 	unsigned char ext_len;
 	unsigned char extensions[8];
 };
+typedef struct PacketFormatExtensionsV1 PacketFormatExtensionsV1;
 
 #if (defined(__SVR4) && defined(__sun))
 #pragma pack(0)
@@ -328,6 +334,7 @@ struct OutgoingPacket {
 	bool need_resend:1;
 	unsigned char data[1];
 };
+typedef struct OutgoingPacket OutgoingPacket;
 
 void no_read(void *socket, const unsigned char *bytes, size_t count) {}
 void no_write(void *socket, unsigned char *bytes, size_t count) {}
@@ -336,7 +343,7 @@ void no_state(void *socket, int state) {}
 void no_error(void *socket, int errcode) {}
 void no_overhead(void *socket, bool send, size_t count, int type) {}
 
-UTPFunctionTable zero_funcs = {
+struct UTPFunctionTable zero_funcs = {
 	&no_read,
 	&no_write,
 	&no_rb_size,
@@ -593,7 +600,7 @@ struct UTPSocket {
 	size_t max_window_user;
 	// 0 = original uTP header, 1 = second revision
 	unsigned char version;
-	CONN_STATE state;
+	enum CONN_STATE state;
 	// TickCount when we last decayed window (wraps)
 	int32_t last_rwin_decay;
 
@@ -644,7 +651,7 @@ struct UTPSocket {
 
 	SendToProc *send_to_proc;
 	void *send_to_userdata;
-	UTPFunctionTable func;
+	struct UTPFunctionTable func;
 	void *userdata;
 
 	// Round trip time
@@ -825,7 +832,7 @@ void send_to_addr(SendToProc *send_to_proc, void *send_to_userdata, const unsign
 	send_to_proc(send_to_userdata, p, len, (const struct sockaddr *)&to, tolen);
 }
 
-void UTPSocket::send_data(PacketFormat* b, size_t length, bandwidth_type_t type)
+void UTPSocket::send_data(PacketFormat* b, size_t length, enum bandwidth_type_t type)
 {
 	// time stamp this packet with local time, the stamp goes into
 	// the header of every packet at the 8th byte for 8 bytes :
@@ -1650,7 +1657,7 @@ void UTPSocket::apply_ledbat_ccontrol(size_t bytes_acked, uint32_t actual_delay,
 	assert(our_delay >= 0);
 
 	SOCKADDR_STORAGE sa = addr.get_sockaddr_storage();
-	UTP_DelaySample((sockaddr*)&sa, our_delay / 1000);
+	UTP_DelaySample((struct sockaddr *)&sa, our_delay / 1000);
 
 	// This test the connection under heavy load from foreground
 	// traffic. Pretend that our delays are very high to force the
@@ -1759,7 +1766,7 @@ size_t UTPSocket::get_packet_size()
 
 	if (DYNAMIC_PACKET_SIZE_ENABLED) {
 		SOCKADDR_STORAGE sa = addr.get_sockaddr_storage();
-		size_t max_packet_size = UTP_GetPacketSizeForAddr((sockaddr*)&sa);
+		size_t max_packet_size = UTP_GetPacketSizeForAddr((struct sockaddr *)&sa);
 		return min(mtu - header_size, max_packet_size);
 	}
 	else
@@ -2397,7 +2404,7 @@ UTPSocket *UTP_Create(SendToProc *send_to_proc, void *send_to_userdata, const st
 	return conn;
 }
 
-void UTP_SetCallbacks(UTPSocket *conn, UTPFunctionTable *funcs, void *userdata)
+void UTP_SetCallbacks(UTPSocket *conn, struct UTPFunctionTable *funcs, void *userdata)
 {
 	assert(conn);
 
@@ -2852,7 +2859,7 @@ void UTP_GetStats(UTPSocket *conn, UTPStats *stats)
 }
 #endif // _DEBUG
 
-void UTP_GetGlobalStats(UTPGlobalStats *stats)
+void UTP_GetGlobalStats(struct UTPGlobalStats *stats)
 {
 	*stats = _global_stats;
 }

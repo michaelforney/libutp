@@ -59,7 +59,7 @@
 #endif //WIN32
 
 #ifdef POSIX
-typedef sockaddr_storage SOCKADDR_STORAGE;
+typedef struct sockaddr_storage SOCKADDR_STORAGE;
 #endif // POSIX
 
 #include "utp.h"

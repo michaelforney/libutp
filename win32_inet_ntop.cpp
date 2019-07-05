@@ -17,16 +17,16 @@ const char *inet_ntop(int af, const void *src, char *dest, size_t length)
 
 	if (af == AF_INET)
 	{
-		address_length = sizeof(sockaddr_in);
-		sockaddr_in* ipv4_address = (sockaddr_in*)(&address);
+		address_length = sizeof(struct sockaddr_in);
+		struct sockaddr_in *ipv4_address = (struct sockaddr_in *)&address;
 		ipv4_address->sin_family = AF_INET;
 		ipv4_address->sin_port = 0;
 		memcpy(&ipv4_address->sin_addr, src, sizeof(in_addr));
 	}
 	else // AF_INET6
 	{
-		address_length = sizeof(sockaddr_in6);
-		sockaddr_in6* ipv6_address = (sockaddr_in6*)(&address);
+		address_length = sizeof(struct sockaddr_in6);
+		struct sockaddr_in6 *ipv6_address = (struct sockaddr_in6 *)&address;
 		ipv6_address->sin6_family = AF_INET6;
 		ipv6_address->sin6_port = 0;
 		ipv6_address->sin6_flowinfo = 0;
@@ -37,7 +37,7 @@ const char *inet_ntop(int af, const void *src, char *dest, size_t length)
 
 	DWORD string_length = (DWORD)(length);
 	int result;
-	result = WSAAddressToStringA((sockaddr*)(&address),
+	result = WSAAddressToStringA((struct sockaddr *)&address,
 								 address_length, 0, dest,
 								 &string_length);
 
@@ -56,14 +56,14 @@ int inet_pton(int af, const char* src, void* dest)
 	SOCKADDR_STORAGE address;
 	int address_length = sizeof(SOCKADDR_STORAGE);
 	int result = WSAStringToAddressA((char*)(src), af, 0,
-									 (sockaddr*)(&address),
+									 (struct sockaddr *)&address,
 									 &address_length);
 
 	if (af == AF_INET)
 	{
 		if (result != SOCKET_ERROR)
 		{
-			sockaddr_in* ipv4_address =(sockaddr_in*)(&address);
+			struct sockaddr_in *ipv4_address = (struct sockaddr_in *)&address;
 			memcpy(dest, &ipv4_address->sin_addr, sizeof(in_addr));
 		}
 		else if (strcmp(src, "255.255.255.255") == 0)
@@ -75,7 +75,7 @@ int inet_pton(int af, const char* src, void* dest)
 	{
 		if (result != SOCKET_ERROR)
 		{
-			sockaddr_in6* ipv6_address = (sockaddr_in6*)(&address);
+			struct sockaddr_in6 *ipv6_address = (struct sockaddr_in6 *)&address;
 			memcpy(dest, &ipv6_address->sin6_addr, sizeof(in6_addr));
 		}
 	}
