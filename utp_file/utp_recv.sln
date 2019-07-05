@@ -1,4 +1,4 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 10.00
 # Visual Studio 2008
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "utp_recv", "utp_recv.vcproj", "{EDE7AB5B-2929-4F2C-AE0B-D74B8D545B3F}"
