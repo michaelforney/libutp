@@ -85,7 +85,7 @@ struct utp_hash_t {
 	utp_link_t allocated;
 	utp_link_t used;
 	utp_link_t free;
-	utp_link_t inits[0];
+	utp_link_t inits[];
 };
 
 #ifdef _MSC_VER
