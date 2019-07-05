@@ -65,10 +65,6 @@ typedef uint16_t uint16_big;
 #pragma pack(pop)
 #endif
 
-typedef int SortCompareProc(const void *, const void *);
-
-template<typename T> static FORCEINLINE void QuickSortT(T *base, size_t num, int (*comp)(const T *, const T *)) { qsort(base, num, sizeof(T), (SortCompareProc*)comp); }
-
 
 // WARNING: The template parameter MUST be a POD type!
 template <typename T, size_t minsize = 16> class Array {
@@ -150,7 +146,7 @@ public:
 	typedef int SortCompareProc(const T *a, const T *b);
 
 	void Sort(SortCompareProc* proc, size_t start, size_t end) {
-		QuickSortT(&mem[start], end - start, proc);
+		qsort(&mem[start], end - start, sizeof(mem[0]), (int(*)(const void *, const void *))proc);
 	}
 
 	void Sort(SortCompareProc* proc, size_t start) {
