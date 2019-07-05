@@ -870,7 +870,7 @@ void UTPSocket::send_data(PacketFormat* b, size_t length, bandwidth_type_t type)
 void UTPSocket::send_ack(bool synack)
 {
 	PacketFormatExtensions pfe;
-	zeromem(&pfe);
+	memset(&pfe, 0, sizeof(pfe));
 	PacketFormatExtensionsV1& pfe1 = (PacketFormatExtensionsV1&)pfe;
 	PacketFormatAck& pfa = (PacketFormatAck&)pfe1;
 	PacketFormatAckV1& pfa1 = (PacketFormatAckV1&)pfe1;
@@ -977,7 +977,7 @@ void UTPSocket::send_rst(SendToProc *send_to_proc, void *send_to_userdata,
 						 const PackedSockAddr &addr, uint32_t conn_id_send, uint16_t ack_nr, uint16_t seq_nr, unsigned char version)
 {
 	PacketFormat pf;
-	zeromem(&pf);
+	memset(&pf, 0, sizeof(pf));
 	PacketFormatV1& pf1 = (PacketFormatV1&)pf;
 
 	size_t len;
