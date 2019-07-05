@@ -1759,7 +1759,7 @@ size_t UTPSocket::get_packet_size()
 
 	if (DYNAMIC_PACKET_SIZE_ENABLED) {
 		SOCKADDR_STORAGE sa = addr.get_sockaddr_storage();
-		size_t max_packet_size = UTP_GetPacketSize((sockaddr*)&sa);
+		size_t max_packet_size = UTP_GetPacketSizeForAddr((sockaddr*)&sa);
 		return min(mtu - header_size, max_packet_size);
 	}
 	else
