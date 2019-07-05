@@ -615,7 +615,7 @@ void utp_socket_log(UTPSocket *conn, int level, char const *fmt, ...)
 	va_end(va);
 	buf[4095] = '\0';
 
-	snprintf(buf2, 4096, "%p %s %06u %s", conn, addrfmt(conn->addr, addrbuf), conn->conn_id_recv, buf);
+	snprintf(buf2, 4096, "%p %s %06u %s", (void *)conn, addrfmt(conn->addr, addrbuf), conn->conn_id_recv, buf);
 	buf2[4095] = '\0';
 
 	utp_context_log_unchecked(conn->ctx, conn, buf2);
