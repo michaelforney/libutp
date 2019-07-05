@@ -794,8 +794,12 @@ struct UTPSocket {
 	size_t get_packet_size();
 };
 
-Array<RST_Info> g_rst_info;
-Array<UTPSocket*> g_utp_sockets;
+RST_Info *g_rst_info;
+size_t g_rst_info_alloc;
+size_t g_rst_info_count;
+UTPSocket **g_utp_sockets;
+size_t g_utp_sockets_alloc;
+size_t g_utp_sockets_count;
 
 static void UTP_RegisterSentPacket(size_t length) {
 	if (length <= PACKET_SIZE_MID) {
@@ -2303,15 +2307,15 @@ void UTP_Free(UTPSocket *conn)
 	conn->func.on_state(conn->userdata, UTP_STATE_DESTROYING);
 	UTP_SetCallbacks(conn, NULL, NULL);
 
-	assert(conn->idx < g_utp_sockets.GetCount());
+	assert(conn->idx < g_utp_sockets_count);
 	assert(g_utp_sockets[conn->idx] == conn);
 
 	// Unlink object from the global list
-	assert(g_utp_sockets.GetCount() > 0);
+	assert(g_utp_sockets_count > 0);
 
-	UTPSocket *last = g_utp_sockets[g_utp_sockets.GetCount() - 1];
+	UTPSocket *last = g_utp_sockets[g_utp_sockets_count - 1];
 
-	assert(last->idx < g_utp_sockets.GetCount());
+	assert(last->idx < g_utp_sockets_count);
 	assert(g_utp_sockets[last->idx] == last);
 
 	last->idx = conn->idx;
@@ -2319,7 +2323,7 @@ void UTP_Free(UTPSocket *conn)
 	g_utp_sockets[conn->idx] = last;
 
 	// Decrease the count
-	g_utp_sockets.SetCount(g_utp_sockets.GetCount() - 1);
+	g_utp_sockets_count--;
 
 	// Free all memory occupied by the socket object.
 	for (size_t i = 0; i <= conn->inbuf.mask; i++) {
@@ -2381,7 +2385,12 @@ UTPSocket *UTP_Create(SendToProc *send_to_proc, void *send_to_userdata, const st
 	conn->outbuf.elements = (void**)calloc(16, sizeof(void*));
 	conn->inbuf.elements = (void**)calloc(16, sizeof(void*));
 
-	conn->idx = g_utp_sockets.Append(conn);
+	if (g_utp_sockets_count >= g_utp_sockets_alloc) {
+		g_utp_sockets_alloc = max((size_t)16, g_utp_sockets_alloc * 2);
+		g_utp_sockets = (UTPSocket **)realloc(g_utp_sockets, g_utp_sockets_alloc * sizeof(g_utp_sockets[0]));
+	}
+	conn->idx = g_utp_sockets_count++;
+	g_utp_sockets[conn->idx] = conn;
 
 	LOG_UTPV("0x%08x: UTP_Create", conn);
 
@@ -2563,7 +2572,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 
 	const unsigned char flags = version == 0 ? pf->flags : pf1->type();
 
-	for (size_t i = 0; i < g_utp_sockets.GetCount(); i++) {
+	for (size_t i = 0; i < g_utp_sockets_count; i++) {
 		UTPSocket *conn = g_utp_sockets[i];
 		//LOG_UTPV("Examining UTPSocket %s for %s and (seed:%u s:%u r:%u) for %u",
 		//		addrfmt(conn->addr, addrbuf), addrfmt(addr, addrbuf2), conn->conn_seed, conn->conn_id_send, conn->conn_id_recv, id);
@@ -2605,7 +2614,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 
 	const uint32_t seq_nr = version == 0 ? ntohs(pf->seq_nr) : ntohs(pf1->seq_nr);
 	if (flags != ST_SYN) {
-		for (size_t i = 0; i < g_rst_info.GetCount(); i++) {
+		for (size_t i = 0; i < g_rst_info_count; i++) {
 			if (g_rst_info[i].connid != id)
 				continue;
 			if (g_rst_info[i].addr != addr)
@@ -2616,16 +2625,20 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 			LOG_UTPV("recv not sending RST to non-SYN (stored)");
 			return true;
 		}
-		if (g_rst_info.GetCount() > RST_INFO_LIMIT) {
-			LOG_UTPV("recv not sending RST to non-SYN (limit at %u stored)", (uint)g_rst_info.GetCount());
+		if (g_rst_info_count > RST_INFO_LIMIT) {
+			LOG_UTPV("recv not sending RST to non-SYN (limit at %u stored)", (uint)g_rst_info_count);
 			return true;
 		}
-		LOG_UTPV("recv send RST to non-SYN (%u stored)", (uint)g_rst_info.GetCount());
-		RST_Info &r = g_rst_info.Append();
-		r.addr = addr;
-		r.connid = id;
-		r.ack_nr = seq_nr;
-		r.timestamp = UTP_GetMilliseconds();
+		LOG_UTPV("recv send RST to non-SYN (%u stored)", (uint)g_rst_info_count);
+		if (g_rst_info_count >= g_rst_info_alloc) {
+			g_rst_info_alloc = max((size_t)16, g_rst_info_alloc * 2);
+			g_rst_info = (RST_Info *)realloc(g_rst_info, g_rst_info_alloc * sizeof(g_rst_info[0]));
+		}
+		RST_Info *r = &g_rst_info[g_rst_info_count++];
+		r->addr = addr;
+		r->connid = id;
+		r->ack_nr = seq_nr;
+		r->timestamp = UTP_GetMilliseconds();
 
 		UTPSocket::send_rst(send_to_proc, send_to_userdata, addr, id, seq_nr, UTP_Random(), version);
 		return true;
@@ -2685,7 +2698,7 @@ bool UTP_HandleICMP(const unsigned char* buffer, size_t len, const struct sockad
 	const unsigned char version = UTP_IsV1(p1);
 	const uint32_t id = (version == 0) ? ntohl(p->connid) : ntohs(p1->connid);
 
-	for (size_t i = 0; i < g_utp_sockets.GetCount(); ++i) {
+	for (size_t i = 0; i < g_utp_sockets_count; ++i) {
 		UTPSocket *conn = g_utp_sockets[i];
 		if (conn->addr == addr &&
 			conn->conn_id_recv == id) {
@@ -2779,17 +2792,21 @@ void UTP_CheckTimeouts()
 {
 	g_current_ms = UTP_GetMilliseconds();
 
-	for (size_t i = 0; i < g_rst_info.GetCount(); i++) {
+	for (size_t i = 0; i < g_rst_info_count; i++) {
 		if ((int)(g_current_ms - g_rst_info[i].timestamp) >= RST_INFO_TIMEOUT) {
-			g_rst_info.MoveUpLast(i);
+			assert(i < g_rst_info_count);
+			size_t c = --g_rst_info_count;
+			if (i != c)
+				g_rst_info[i] = g_rst_info[c];
 			i--;
 		}
 	}
-	if (g_rst_info.GetCount() != g_rst_info.GetAlloc()) {
-		g_rst_info.Compact();
+	if (g_rst_info_count != g_rst_info_alloc) {
+		g_rst_info = (RST_Info *)realloc(g_rst_info, g_rst_info_count * sizeof(g_rst_info[0]));
+		g_rst_info_alloc = g_rst_info_count;
 	}
 
-	for (size_t i = 0; i != g_utp_sockets.GetCount(); i++) {
+	for (size_t i = 0; i != g_utp_sockets_count; i++) {
 		UTPSocket *conn = g_utp_sockets[i];
 		conn->check_timeouts();
 

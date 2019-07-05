@@ -95,7 +95,18 @@ struct socket_state
 	bool operator==(socket_state const& rhs) const { return s == rhs.s; }
 };
 
-Array<socket_state> g_sockets;
+socket_state *g_sockets;
+size_t g_sockets_alloc;
+size_t g_sockets_count;
+
+static void g_sockets_append(socket_state *s)
+{
+	if (g_sockets_count >= g_sockets_alloc) {
+		g_sockets_alloc = max((size_t)16, g_sockets_alloc * 2);
+		g_sockets = (socket_state *)realloc(g_sockets, g_sockets_alloc * sizeof(g_sockets[0]));
+	}
+	g_sockets[g_sockets_count++] = *s;
+}
 
 void utp_log(char const* fmt, ...)
 {
@@ -212,10 +223,10 @@ void got_incoming_connection(void *userdata, UTPSocket* s)
 	printf("incoming socket %p\n", s);
 	socket_state sock;
 	sock.s = s;
-	g_sockets.Append(sock);
+	g_sockets_append(&sock);
 	// An application would call UTP_SetCallbacks here, but we don't want to do anything
 	// with this socket except throw away bytes received.
-	//UTP_SetCallbacks(s, &utp_callbacks, &g_sockets[g_sockets.GetCount()-1]);
+	//UTP_SetCallbacks(s, &utp_callbacks, &g_sockets[g_sockets_count-1]);
 	// perhaps they would set some sock opts here too
 	//UTP_SetSockopt(s, SO_SNDBUF, 100*300);
 }
@@ -306,8 +317,15 @@ void utp_state(void* socket, int state)
 			s->s = NULL;
 		}
 	} else if (state == UTP_STATE_DESTROYING) {
-		size_t index = g_sockets.LookupElement(*s);
-		if (index != (size_t)-1) g_sockets.MoveUpLast(index);
+		size_t i;
+		for (i = 0; i != g_sockets_count; i++) {
+			if (g_sockets[i] == *s) {
+				size_t c = --g_sockets_count;
+				if (i != c)
+					g_sockets[i] = g_sockets[c];
+				break;
+			}
+		}
 	}
 }
 
@@ -472,8 +490,8 @@ int main(int argc, char* argv[])
 		&utp_error,
 		&utp_overhead
 	};
-	g_sockets.Append(s);
-	UTP_SetCallbacks(s.s, &utp_callbacks, &g_sockets[g_sockets.GetCount()-1]);
+	g_sockets_append(&s);
+	UTP_SetCallbacks(s.s, &utp_callbacks, &g_sockets[g_sockets_count-1]);
 
 	printf("connecting socket %p\n", s.s);
 	UTP_Connect(s.s);
@@ -481,7 +499,7 @@ int main(int argc, char* argv[])
 	int last_sent = 0;
 	unsigned int last_time = UTP_GetMilliseconds();
 
-	while (g_sockets.GetCount() > 0) {
+	while (g_sockets_count > 0) {
 		sm.select(50000);
 		UTP_CheckTimeouts();
 		unsigned int cur_time = UTP_GetMilliseconds();
