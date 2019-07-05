@@ -8,6 +8,7 @@
 #include <string.h>
 #include <string.h>
 #include <stdlib.h>
+#include <inttypes.h>
 #include <errno.h>
 #include <limits.h> // for UINT_MAX
 
@@ -829,12 +830,12 @@ void UTPSocket::send_data(PacketFormat* b, size_t length, bandwidth_type_t type)
 
 	PacketFormatV1* b1 = (PacketFormatV1*)b;
 	if (version == 0) {
-		b->tv_sec = (uint32_t)(time / 1000000);
-		b->tv_usec = time % 1000000;
-		b->reply_micro = reply_micro;
+		b->tv_sec = htonl(time / 1000000);
+		b->tv_usec = htonl(time % 1000000);
+		b->reply_micro = htonl(reply_micro);
 	} else {
-		b1->tv_usec = (uint32_t)time;
-		b1->reply_micro = reply_micro;
+		b1->tv_usec = htonl(time);
+		b1->reply_micro = htonl(reply_micro);
 	}
 
 	last_sent_packet = g_current_ms;
@@ -877,9 +878,9 @@ void UTPSocket::send_ack(bool synack)
 	size_t len;
 	last_rcv_win = get_rcv_window();
 	if (version == 0) {
-		pfa.pf.connid = conn_id_send;
-		pfa.pf.ack_nr = (uint16_t)ack_nr;
-		pfa.pf.seq_nr = (uint16_t)seq_nr;
+		pfa.pf.connid = htonl(conn_id_send);
+		pfa.pf.ack_nr = htons(ack_nr);
+		pfa.pf.seq_nr = htons(seq_nr);
 		pfa.pf.flags = ST_STATE;
 		pfa.pf.ext = 0;
 		pfa.pf.windowsize = (unsigned char)DIV_ROUND_UP(last_rcv_win, PACKET_SIZE);
@@ -888,10 +889,10 @@ void UTPSocket::send_ack(bool synack)
 		pfa1.pf.set_version(1);
 		pfa1.pf.set_type(ST_STATE);
 		pfa1.pf.ext = 0;
-		pfa1.pf.connid = conn_id_send;
-		pfa1.pf.ack_nr = ack_nr;
-		pfa1.pf.seq_nr = seq_nr;
-		pfa1.pf.windowsize = (uint32_t)last_rcv_win;
+		pfa1.pf.connid = htons(conn_id_send);
+		pfa1.pf.ack_nr = htons(ack_nr);
+		pfa1.pf.seq_nr = htons(seq_nr);
+		pfa1.pf.windowsize = htonl(last_rcv_win);
 		len = sizeof(PacketFormatV1);
 	}
 
@@ -981,9 +982,9 @@ void UTPSocket::send_rst(SendToProc *send_to_proc, void *send_to_userdata,
 
 	size_t len;
 	if (version == 0) {
-		pf.connid = conn_id_send;
-		pf.ack_nr = ack_nr;
-		pf.seq_nr = seq_nr;
+		pf.connid = htonl(conn_id_send);
+		pf.ack_nr = htons(ack_nr);
+		pf.seq_nr = htons(seq_nr);
 		pf.flags = ST_RESET;
 		pf.ext = 0;
 		pf.windowsize = 0;
@@ -992,10 +993,10 @@ void UTPSocket::send_rst(SendToProc *send_to_proc, void *send_to_userdata,
 		pf1.set_version(1);
 		pf1.set_type(ST_RESET);
 		pf1.ext = 0;
-		pf1.connid = conn_id_send;
-		pf1.ack_nr = ack_nr;
-		pf1.seq_nr = seq_nr;
-		pf1.windowsize = 0;
+		pf1.connid = htons(conn_id_send);
+		pf1.ack_nr = htons(ack_nr);
+		pf1.seq_nr = htons(seq_nr);
+		pf1.windowsize = htonl(0);
 		len = sizeof(PacketFormatV1);
 	}
 
@@ -1028,9 +1029,9 @@ void UTPSocket::send_packet(OutgoingPacket *pkt)
 	PacketFormatV1* p1 = (PacketFormatV1*)pkt->data;
 	PacketFormat* p = (PacketFormat*)pkt->data;
 	if (version == 0) {
-		p->ack_nr = ack_nr;
+		p->ack_nr = htons(ack_nr);
 	} else {
-		p1->ack_nr = ack_nr;
+		p1->ack_nr = htons(ack_nr);
 	}
 	pkt->time_sent = UTP_GetMicroseconds();
 	pkt->transmissions++;
@@ -1177,26 +1178,26 @@ void UTPSocket::write_outgoing_packet(size_t payload, uint flags)
 		PacketFormat* p = (PacketFormat*)pkt->data;
 		PacketFormatV1* p1 = (PacketFormatV1*)pkt->data;
 		if (version == 0) {
-			p->connid = conn_id_send;
+			p->connid = htonl(conn_id_send);
 			p->ext = 0;
 			p->windowsize = (unsigned char)DIV_ROUND_UP(last_rcv_win, PACKET_SIZE);
-			p->ack_nr = ack_nr;
+			p->ack_nr = htons(ack_nr);
 			p->flags = flags;
 		} else {
 			p1->set_version(1);
 			p1->set_type(flags);
 			p1->ext = 0;
-			p1->connid = conn_id_send;
-			p1->windowsize = (uint32_t)last_rcv_win;
-			p1->ack_nr = ack_nr;
+			p1->connid = htons(conn_id_send);
+			p1->windowsize = htonl(last_rcv_win);
+			p1->ack_nr = htons(ack_nr);
 		}
 
 		if (append) {
 			// Remember the message in the outgoing queue.
 			outbuf.ensure_size(seq_nr, cur_window_packets);
 			outbuf.put(seq_nr, pkt);
-			if (version == 0) p->seq_nr = seq_nr;
-			else p1->seq_nr = seq_nr;
+			if (version == 0) p->seq_nr = htons(seq_nr);
+			else p1->seq_nr = htons(seq_nr);
 			seq_nr++;
 			cur_window_packets++;
 		}
@@ -1779,12 +1780,12 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 	uint16_t pk_ack_nr;
 	uint8_t pk_flags;
 	if (conn->version == 0) {
-		pk_seq_nr = pf->seq_nr;
-		pk_ack_nr = pf->ack_nr;
+		pk_seq_nr = ntohs(pf->seq_nr);
+		pk_ack_nr = ntohs(pf->ack_nr);
 		pk_flags = pf->flags;
 	} else {
-		pk_seq_nr = pf1->seq_nr;
-		pk_ack_nr = pf1->ack_nr;
+		pk_seq_nr = ntohs(pf1->seq_nr);
+		pk_ack_nr = ntohs(pf1->ack_nr);
 		pk_flags = pf1->type();
 	}
 
@@ -1792,8 +1793,8 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 
 	LOG_UTPV("0x%08x: Got %s. seq_nr:%u ack_nr:%u state:%s version:%u timestamp:" I64u " reply_micro:%u",
 			 conn, flagnames[pk_flags], pk_seq_nr, pk_ack_nr, statenames[conn->state], conn->version,
-			 conn->version == 0?(uint64_t)(pf->tv_sec) * 1000000 + pf->tv_usec:uint64_t(pf1->tv_usec),
-			 conn->version == 0?(uint32_t)(pf->reply_micro):(uint32_t)(pf1->reply_micro));
+			 conn->version == 0?(uint64_t)ntohl(pf->tv_sec) * 1000000 + ntohl(pf->tv_usec):(uint64_t)ntohl(pf1->tv_usec),
+			 conn->version == 0?ntohl(pf->reply_micro):ntohl(pf1->reply_micro));
 
 	// mark receipt time
 	uint64_t time = UTP_GetMicroseconds();
@@ -1927,9 +1928,9 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 	uint64_t p;
 
 	if (conn->version == 0) {
-		p = uint64_t(pf->tv_sec) * 1000000 + pf->tv_usec;
+		p = (uint64_t)ntohl(pf->tv_sec) * 1000000 + ntohl(pf->tv_usec);
 	} else {
-		p = pf1->tv_usec;
+		p = ntohl(pf1->tv_usec);
 	}
 
 	conn->last_measured_delay = g_current_ms;
@@ -1953,8 +1954,8 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 	}
 
 	const uint32_t actual_delay = conn->version==0
-		?(pf->reply_micro==INT_MAX?0:uint32_t(pf->reply_micro))
-		:(uint32_t(pf1->reply_micro)==INT_MAX?0:uint32_t(pf1->reply_micro));
+		?(ntohl(pf->reply_micro)==INT_MAX?0:ntohl(pf->reply_micro))
+		:(ntohl(pf1->reply_micro)==INT_MAX?0:ntohl(pf1->reply_micro));
 
 	// if the actual delay is 0, it means the other end
 	// hasn't received a sample from us yet, and doesn't
@@ -1998,7 +1999,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 	// past the point we've sent
 	if (acks <= conn->cur_window_packets) {
 		conn->max_window_user = conn->version == 0
-			? pf->windowsize * PACKET_SIZE : pf1->windowsize;
+			? pf->windowsize * PACKET_SIZE : ntohl(pf1->windowsize);
 
 		// If max user window is set to 0, then we startup a timer
 		// That will reset it to 1 after 15 seconds.
@@ -2484,10 +2485,10 @@ void UTP_Connect(UTPSocket *conn)
 	// SYN packets are special, and have the receive ID in the connid field,
 	// instead of conn_id_send.
 	if (conn->version == 0) {
-		p->pf.connid = conn->conn_id_recv;
+		p->pf.connid = htonl(conn->conn_id_recv);
 		p->pf.ext = 2;
 		p->pf.windowsize = (unsigned char)DIV_ROUND_UP(conn->last_rcv_win, PACKET_SIZE);
-		p->pf.seq_nr = conn->seq_nr;
+		p->pf.seq_nr = htons(conn->seq_nr);
 		p->pf.flags = ST_SYN;
 		p->ext_next = 0;
 		p->ext_len = 8;
@@ -2496,9 +2497,9 @@ void UTP_Connect(UTPSocket *conn)
 		p1->pf.set_version(1);
 		p1->pf.set_type(ST_SYN);
 		p1->pf.ext = 2;
-		p1->pf.connid = conn->conn_id_recv;
-		p1->pf.windowsize = (uint32_t)conn->last_rcv_win;
-		p1->pf.seq_nr = conn->seq_nr;
+		p1->pf.connid = htons(conn->conn_id_recv);
+		p1->pf.windowsize = htonl(conn->last_rcv_win);
+		p1->pf.seq_nr = htons(conn->seq_nr);
 		p1->ext_next = 0;
 		p1->ext_len = 8;
 		memset(p1->extensions, 0, 8);
@@ -2534,7 +2535,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 	const PacketFormatV1* p1 = (PacketFormatV1*)buffer;
 
 	const unsigned char version = UTP_IsV1(p1);
-	const uint32_t id = (version == 0) ? p->connid : uint32_t(p1->connid);
+	const uint32_t id = (version == 0) ? ntohl(p->connid) : ntohs(p1->connid);
 
 	if (version == 0 && len < sizeof(PacketFormat)) {
 		LOG_UTPV("recv %s len:%u version:%u too small", addrfmt(addr, addrbuf), (uint)len, version);
@@ -2552,9 +2553,9 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 	const PacketFormatV1 *pf1 = (PacketFormatV1*)p;
 
 	if (version == 0) {
-		LOG_UTPV("recv id:%u seq_nr:%u ack_nr:%u", id, (uint)pf->seq_nr, (uint)pf->ack_nr);
+		LOG_UTPV("recv id:%u seq_nr:%" PRIu16 " ack_nr:%" PRIu16, id, ntohs(pf->seq_nr), ntohs(pf->ack_nr));
 	} else {
-		LOG_UTPV("recv id:%u seq_nr:%u ack_nr:%u", id, (uint)pf1->seq_nr, (uint)pf1->ack_nr);
+		LOG_UTPV("recv id:%u seq_nr:%" PRIu16 " ack_nr:%" PRIu16, id, ntohs(pf1->seq_nr), ntohs(pf1->ack_nr));
 	}
 
 	const unsigned char flags = version == 0 ? pf->flags : pf1->type();
@@ -2599,7 +2600,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 		return true;
 	}
 
-	const uint32_t seq_nr = version == 0 ? pf->seq_nr : pf1->seq_nr;
+	const uint32_t seq_nr = version == 0 ? ntohs(pf->seq_nr) : ntohs(pf1->seq_nr);
 	if (flags != ST_SYN) {
 		for (size_t i = 0; i < g_rst_info.GetCount(); i++) {
 			if (g_rst_info[i].connid != id)
@@ -2679,7 +2680,7 @@ bool UTP_HandleICMP(const unsigned char* buffer, size_t len, const struct sockad
 	const PacketFormatV1* p1 = (PacketFormatV1*)buffer;
 
 	const unsigned char version = UTP_IsV1(p1);
-	const uint32_t id = (version == 0) ? p->connid : uint32_t(p1->connid);
+	const uint32_t id = (version == 0) ? ntohl(p->connid) : ntohs(p1->connid);
 
 	for (size_t i = 0; i < g_utp_sockets.GetCount(); ++i) {
 		UTPSocket *conn = g_utp_sockets[i];

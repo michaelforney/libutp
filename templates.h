@@ -54,28 +54,8 @@ template <typename T> static inline T clamp(T v, T mi, T ma)
 #pragma pack(push,1)
 #endif
 
-namespace aux
-{
-	FORCEINLINE uint16_t host_to_network(uint16_t i) { return htons(i); }
-	FORCEINLINE uint32_t host_to_network(uint32_t i) { return htonl(i); }
-	FORCEINLINE int32_t host_to_network(int32_t i) { return htonl(i); }
-	FORCEINLINE uint16_t network_to_host(uint16_t i) { return ntohs(i); }
-	FORCEINLINE uint32_t network_to_host(uint32_t i) { return ntohl(i); }
-	FORCEINLINE int32_t network_to_host(int32_t i) { return ntohl(i); }
-}
-
-template <class T>
-struct PACKED_ATTRIBUTE big_endian
-{
-	T operator=(T i) { m_integer = aux::host_to_network(i); return i; }
-	operator T() const { return aux::network_to_host(m_integer); }
-private:
-	T m_integer;
-};
-
-typedef big_endian<int32_t> int32_big;
-typedef big_endian<uint32_t> uint32_big;
-typedef big_endian<uint16_t> uint16_big;
+typedef uint32_t uint32_big;
+typedef uint16_t uint16_big;
 
 #if (defined(__SVR4) && defined(__sun))
 #pragma pack(0)
