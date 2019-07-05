@@ -256,10 +256,6 @@ struct PACKED_ATTRIBUTE PacketFormatV1 {
 	// packet_type (4 high bits)
 	// protocol version (4 low bits)
 	unsigned char ver_type;
-	unsigned char version() const { return ver_type & 0xf; }
-	unsigned char type() const { return ver_type >> 4; }
-	void set_version(unsigned char v) { ver_type = (ver_type & 0xf0) | (v & 0xf); }
-	void set_type(unsigned char t) { ver_type = (ver_type & 0xf) | (t << 4); }
 
 	// Type of the first extension header
 	unsigned char ext;
@@ -274,6 +270,19 @@ struct PACKED_ATTRIBUTE PacketFormatV1 {
 	// Acknowledgment number
 	uint16_big ack_nr;
 };
+typedef struct PacketFormatV1 PacketFormatV1;
+
+unsigned char packetformatv1_version(const PacketFormatV1 *pf1) { return pf1->ver_type & 0xf; }
+unsigned char packetformatv1_type(const PacketFormatV1 *pf1) { return pf1->ver_type >> 4; }
+
+void packetformatv1_set_version(PacketFormatV1 *pf1, unsigned char v)
+{
+	pf1->ver_type = (pf1->ver_type & 0xf0) | (v & 0xf);
+}
+
+void packetformatv1_set_type(PacketFormatV1 *pf1, unsigned char t) {
+	pf1->ver_type = (pf1->ver_type & 0xf) | (t << 4);
+}
 
 struct PACKED_ATTRIBUTE PacketFormatAckV1 {
 	PacketFormatV1 pf;
@@ -897,8 +906,8 @@ void UTPSocket::send_ack(bool synack)
 		pfa.pf.windowsize = (unsigned char)DIV_ROUND_UP(last_rcv_win, PACKET_SIZE);
 		len = sizeof(PacketFormat);
 	} else {
-		pfa1.pf.set_version(1);
-		pfa1.pf.set_type(ST_STATE);
+		packetformatv1_set_version(&pfa1.pf, 1);
+		packetformatv1_set_type(&pfa1.pf, ST_STATE);
 		pfa1.pf.ext = 0;
 		pfa1.pf.connid = htons(conn_id_send);
 		pfa1.pf.ack_nr = htons(ack_nr);
@@ -1001,8 +1010,8 @@ void UTPSocket::send_rst(SendToProc *send_to_proc, void *send_to_userdata,
 		pf.windowsize = 0;
 		len = sizeof(PacketFormat);
 	} else {
-		pf1.set_version(1);
-		pf1.set_type(ST_RESET);
+		packetformatv1_set_version(&pf1, 1);
+		packetformatv1_set_type(&pf1, ST_RESET);
 		pf1.ext = 0;
 		pf1.connid = htons(conn_id_send);
 		pf1.ack_nr = htons(ack_nr);
@@ -1195,8 +1204,8 @@ void UTPSocket::write_outgoing_packet(size_t payload, uint flags)
 			p->ack_nr = htons(ack_nr);
 			p->flags = flags;
 		} else {
-			p1->set_version(1);
-			p1->set_type(flags);
+			packetformatv1_set_version(p1, 1);
+			packetformatv1_set_type(p1, flags);
 			p1->ext = 0;
 			p1->connid = htons(conn_id_send);
 			p1->windowsize = htonl(last_rcv_win);
@@ -1800,7 +1809,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 	} else {
 		pk_seq_nr = ntohs(pf1->seq_nr);
 		pk_ack_nr = ntohs(pf1->ack_nr);
-		pk_flags = pf1->type();
+		pk_flags = packetformatv1_type(pf1);
 	}
 
 	if (pk_flags >= ST_NUM_STATES) return 0;
@@ -2304,7 +2313,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 
 inline bool UTP_IsV1(PacketFormatV1 const* pf)
 {
-	return pf->version() == 1 && pf->type() < ST_NUM_STATES && pf->ext < 3;
+	return packetformatv1_version(pf) == 1 && packetformatv1_type(pf) < ST_NUM_STATES && pf->ext < 3;
 }
 
 void UTP_Free(UTPSocket *conn)
@@ -2513,8 +2522,8 @@ void UTP_Connect(UTPSocket *conn)
 		p->ext_len = 8;
 		memset(p->extensions, 0, 8);
 	} else {
-		p1->pf.set_version(1);
-		p1->pf.set_type(ST_SYN);
+		packetformatv1_set_version(&p1->pf, 1);
+		packetformatv1_set_type(&p1->pf, ST_SYN);
 		p1->pf.ext = 2;
 		p1->pf.connid = htons(conn->conn_id_recv);
 		p1->pf.windowsize = htonl(conn->last_rcv_win);
@@ -2578,7 +2587,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 		LOG_UTPV("recv id:%u seq_nr:%" PRIu16 " ack_nr:%" PRIu16, id, ntohs(pf1->seq_nr), ntohs(pf1->ack_nr));
 	}
 
-	const unsigned char flags = version == 0 ? pf->flags : pf1->type();
+	const unsigned char flags = version == 0 ? pf->flags : packetformatv1_type(pf1);
 
 	for (size_t i = 0; i < g_utp_sockets_count; i++) {
 		UTPSocket *conn = g_utp_sockets[i];
