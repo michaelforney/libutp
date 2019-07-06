@@ -1647,7 +1647,7 @@ static void utp_apply_ledbat_ccontrol(UTPSocket *conn, size_t bytes_acked, uint3
 	// variable is the RTT in microseconds
 	
 	assert(min_rtt >= 0);
-	int32_t our_delay = min(delayhist_get_value(&conn->our_hist), uint32_t(min_rtt));
+	int32_t our_delay = min(delayhist_get_value(&conn->our_hist), (uint32_t)min_rtt);
 	assert(our_delay != INT_MAX);
 	assert(our_delay >= 0);
 
@@ -1994,7 +1994,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 
 	// if the delay estimate exceeds the RTT, adjust the base_delay to
 	// compensate
-	if (delayhist_get_value(&conn->our_hist) > uint32_t(min_rtt)) {
+	if (delayhist_get_value(&conn->our_hist) > (uint32_t)min_rtt) {
 		delayhist_shift(&conn->our_hist, delayhist_get_value(&conn->our_hist) - min_rtt);
 	}
 
@@ -2367,7 +2367,7 @@ UTPSocket *UTP_Create(SendToProc *send_to_proc, void *send_to_userdata, const st
 	conn->last_got_packet = g_current_ms;
 	conn->last_sent_packet = g_current_ms;
 	conn->last_measured_delay = g_current_ms + 0x70000000;
-	conn->last_rwin_decay = int32_t(g_current_ms) - MAX_WINDOW_DECAY;
+	conn->last_rwin_decay = (int32_t)g_current_ms - MAX_WINDOW_DECAY;
 	conn->last_send_quota = g_current_ms;
 	conn->send_quota = PACKET_SIZE * 100;
 	conn->cur_window_packets = 0;

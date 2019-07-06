@@ -131,13 +131,13 @@ static uint64_t GetMicroseconds()
 	if (have_posix_clocks) {
 		struct timespec ts;
 		rc = clock_gettime(CLOCK_MONOTONIC, &ts);
-		return uint64_t(ts.tv_sec) * 1000000 + ts.tv_nsec / 1000;
+		return (uint64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
 	}
 #endif
 	{
 		struct timeval tv;
 		rc = gettimeofday(&tv, NULL);
-		return uint64_t(tv.tv_sec) * 1000000 + tv.tv_usec;
+		return (uint64_t)tv.tv_sec * 1000000 + tv.tv_usec;
 	}
 }
 #endif //!__APPLE__
