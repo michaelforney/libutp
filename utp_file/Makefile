@@ -13,7 +13,7 @@ else
   libs:=
 endif
 
-utp:=../utp.cpp ../utp_utils.cpp
+utp:=../utp.c ../utp_utils.c
 cflags:=-fno-exceptions -fno-rtti
 
 $(bin_send): utp_send.cpp
