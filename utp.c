@@ -782,13 +782,6 @@ static size_t utp_get_udp_overhead(const UTPSocket *conn)
 	return UTP_GetUDPOverhead((const struct sockaddr *)&sa, len);
 }
 
-static uint64_t utp_get_global_utp_bytes_sent(const UTPSocket *conn)
-{
-	socklen_t len;
-	SOCKADDR_STORAGE sa = packedsockaddr_get_sockaddr_storage(&conn->addr, &len);
-	return UTP_GetGlobalUTPBytesSent((const struct sockaddr *)&sa, len);
-}
-
 static size_t utp_get_overhead(const UTPSocket *conn)
 {
 	return utp_get_udp_overhead(conn) + utp_get_header_size(conn);
