@@ -1773,7 +1773,7 @@ static size_t utp_get_packet_size(UTPSocket *conn)
 // Process an incoming packet
 // syn is true if this is the first packet received. It will cut off parsing
 // as soon as the header is done
-size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t len, bool syn = false)
+size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t len, bool syn)
 {
 	UTP_RegisterRecvPacket(conn, len);
 
@@ -2600,7 +2600,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 			return true;
 		} else if (flags != ST_SYN && conn->conn_id_recv == id) {
 			LOG_UTPV("0x%08x: recv processing", conn);
-			const size_t read = UTP_ProcessIncoming(conn, buffer, len);
+			const size_t read = UTP_ProcessIncoming(conn, buffer, len, false);
 			if (conn->userdata) {
 				conn->func.on_overhead(conn->userdata, false,
 					(len - read) + utp_get_udp_overhead(conn),
