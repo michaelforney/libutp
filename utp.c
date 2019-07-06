@@ -202,7 +202,7 @@ struct PACKED_ATTRIBUTE RST_Info {
 	uint32_t connid;
 	uint32_t timestamp;
 	uint16_t ack_nr;
-};
+} ALIGNED_ATTRIBUTE(4);
 typedef struct RST_Info RST_Info;
 
 // these packet sizes are including the uTP header wich
