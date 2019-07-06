@@ -366,39 +366,56 @@ struct SizableCircularBuffer {
 	size_t mask;
 	// This is the elements that the circular buffer points to
 	void **elements;
-
-	void *get(size_t i) { assert(elements); return elements ? elements[i & mask] : NULL; }
-	void put(size_t i, void *data) { assert(elements); elements[i&mask] = data; }
-
-	void grow(size_t item, size_t index);
-	void ensure_size(size_t item, size_t index) { if (index > mask) grow(item, index); }
-	size_t size() { return mask + 1; }
 };
+typedef struct SizableCircularBuffer SizableCircularBuffer;
 
 static struct UTPGlobalStats _global_stats;
 
+void *circbuf_get(SizableCircularBuffer *buf, size_t i)
+{
+	assert(buf->elements);
+	return buf->elements ? buf->elements[i & buf->mask] : NULL;
+}
+
+void circbuf_put(SizableCircularBuffer *buf, size_t i, void *data)
+{
+	assert(buf->elements);
+	buf->elements[i & buf->mask] = data;
+}
+
 // Item contains the element we want to make space for
 // index is the index in the list.
-void SizableCircularBuffer::grow(size_t item, size_t index)
+void circbuf_grow(SizableCircularBuffer *buf, size_t item, size_t index)
 {
 	// Figure out the new size.
-	size_t size = mask + 1;
+	size_t size = buf->mask + 1;
 	do size *= 2; while (index >= size);
 
 	// Allocate the new buffer
-	void **buf = (void**)calloc(size, sizeof(void*));
+	void **elements = (void**)calloc(size, sizeof(void*));
 
 	size--;
 
 	// Copy elements from the old buffer to the new buffer
-	for (size_t i = 0; i <= mask; i++) {
-		buf[(item - index + i) & size] = get(item - index + i);
+	for (size_t i = 0; i <= buf->mask; i++) {
+		elements[(item - index + i) & size] = circbuf_get(buf, item - index + i);
 	}
 
 	// Swap to the newly allocated buffer
-	mask = size;
-	free(elements);
-	elements = buf;
+	buf->mask = size;
+	free(buf->elements);
+	buf->elements = elements;
+}
+
+void circbuf_ensure_size(SizableCircularBuffer *buf, size_t item, size_t index)
+{
+	if (index > buf->mask)
+		circbuf_grow(buf, item, index);
+}
+
+size_t circbuf_size(SizableCircularBuffer *buf)
+{
+	return buf->mask + 1;
 }
 
 // compare if lhs is less than rhs, taking wrapping
@@ -938,11 +955,11 @@ void UTPSocket::send_ack(bool synack)
 		// reorder count should only be non-zero
 		// if the packet ack_nr + 1 has not yet
 		// been received
-		assert(inbuf.get(ack_nr + 1) == NULL);
-		size_t window = min((size_t)14+16, inbuf.size());
+		assert(circbuf_get(&inbuf, ack_nr + 1) == NULL);
+		size_t window = min((size_t)14+16, circbuf_size(&inbuf));
 		// Generate bit mask of segments received.
 		for (size_t i = 0; i < window; i++) {
-			if (inbuf.get(ack_nr + i + 2) != NULL) {
+			if (circbuf_get(&inbuf, ack_nr + i + 2) != NULL) {
 				m |= 1 << i;
 				LOG_UTPV("0x%08x: EACK packet [%u]", this, ack_nr + i + 2);
 			}
@@ -1114,7 +1131,7 @@ bool UTPSocket::flush_packets()
 	// i has to be an unsigned 16 bit counter to wrap correctly
 	// signed types are not guaranteed to wrap the way you expect
 	for (uint16_t i = seq_nr - cur_window_packets; i != seq_nr; ++i) {
-		OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(i);
+		OutgoingPacket *pkt = (OutgoingPacket*)circbuf_get(&outbuf, i);
 		if (pkt == 0 || (pkt->transmissions > 0 && pkt->need_resend == false)) continue;
 		// have we run out of quota?
 		if (!is_writable(pkt->payload)) {
@@ -1157,7 +1174,7 @@ void UTPSocket::write_outgoing_packet(size_t payload, uint flags)
 		OutgoingPacket *pkt = NULL;
 		
 		if (cur_window_packets > 0) {
-			pkt = (OutgoingPacket*)outbuf.get(seq_nr - 1);
+			pkt = (OutgoingPacket*)circbuf_get(&outbuf, seq_nr - 1);
 		}
 
 		const size_t header_size = get_header_size();
@@ -1172,7 +1189,7 @@ void UTPSocket::write_outgoing_packet(size_t payload, uint flags)
 										   (sizeof(OutgoingPacket) - 1) +
 										   header_size +
 										   pkt->payload + added);
-			outbuf.put(seq_nr - 1, pkt);
+			circbuf_put(&outbuf, seq_nr - 1, pkt);
 			append = false;
 			assert(!pkt->need_resend);
 		} else {
@@ -1214,8 +1231,8 @@ void UTPSocket::write_outgoing_packet(size_t payload, uint flags)
 
 		if (append) {
 			// Remember the message in the outgoing queue.
-			outbuf.ensure_size(seq_nr, cur_window_packets);
-			outbuf.put(seq_nr, pkt);
+			circbuf_ensure_size(&outbuf, seq_nr, cur_window_packets);
+			circbuf_put(&outbuf, seq_nr, pkt);
 			if (version == 0) p->seq_nr = htons(seq_nr);
 			else p1->seq_nr = htons(seq_nr);
 			seq_nr++;
@@ -1265,7 +1282,7 @@ void UTPSocket::check_timeouts()
 #endif
 
 	// this invariant should always be true
-	assert(cur_window_packets == 0 || outbuf.get(seq_nr - cur_window_packets));
+	assert(cur_window_packets == 0 || circbuf_get(&outbuf, seq_nr - cur_window_packets));
 
 	LOG_UTPV("0x%08x: CheckTimeouts timeout:%d max_window:%u cur_window:%u quota:%d "
 			 "state:%s cur_window_packets:%u bytes_since_ack:%u ack_time:%d",
@@ -1341,7 +1358,7 @@ void UTPSocket::check_timeouts()
 
 			// every packet should be considered lost
 			for (int i = 0; i < cur_window_packets; ++i) {
-				OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(seq_nr - i - 1);
+				OutgoingPacket *pkt = (OutgoingPacket*)circbuf_get(&outbuf, seq_nr - i - 1);
 				if (pkt == 0 || pkt->transmissions == 0 || pkt->need_resend) continue;
 				pkt->need_resend = true;
 				assert(cur_window >= pkt->payload);
@@ -1356,7 +1373,7 @@ void UTPSocket::check_timeouts()
 			timeout_seq_nr = seq_nr;
 
 			if (cur_window_packets > 0) {
-				OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(seq_nr - cur_window_packets);
+				OutgoingPacket *pkt = (OutgoingPacket*)circbuf_get(&outbuf, seq_nr - cur_window_packets);
 				assert(pkt);
 				send_quota = max((int32_t)pkt->length * 100, send_quota);
 
@@ -1419,7 +1436,7 @@ void UTPSocket::check_timeouts()
 // 2: the packet has not been sent yet
 int UTPSocket::ack_packet(uint16_t seq)
 {
-	OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(seq);
+	OutgoingPacket *pkt = (OutgoingPacket*)circbuf_get(&outbuf, seq);
 
 	// the packet has already been acked (or not sent)
 	if (pkt == NULL) {
@@ -1437,7 +1454,7 @@ int UTPSocket::ack_packet(uint16_t seq)
 	LOG_UTPV("0x%08x: got ack for:%u (pkt_size:%u need_resend:%u)",
 			 this, seq, (uint)pkt->payload, pkt->need_resend);
 
-	outbuf.put(seq, NULL);
+	circbuf_put(&outbuf, seq, NULL);
 
 	// if we never re-sent the packet, update the RTT estimate
 	if (pkt->transmissions == 1) {
@@ -1493,7 +1510,7 @@ size_t UTPSocket::selective_ack_bytes(uint base, const unsigned char* mask, unsi
 
 		// ignore bits that represents packets we haven't sent yet
 		// or packets that have already been acked
-		OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(v);
+		OutgoingPacket *pkt = (OutgoingPacket*)circbuf_get(&outbuf, v);
 		if (!pkt || pkt->transmissions == 0)
 			continue;
 
@@ -1573,7 +1590,7 @@ void UTPSocket::selective_ack(uint base, const unsigned char *mask, unsigned cha
 
 		// ignore bits that represents packets we haven't sent yet
 		// or packets that have already been acked
-		OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(v);
+		OutgoingPacket *pkt = (OutgoingPacket*)circbuf_get(&outbuf, v);
 		if (!pkt || pkt->transmissions == 0) {
 			LOG_UTPV("0x%08x: skipping %u. pkt:%08x transmissions:%u %s",
 					 this, v, pkt, pkt?pkt->transmissions:0, pkt?"(not sent yet?)":"(already acked?)");
@@ -1627,7 +1644,7 @@ void UTPSocket::selective_ack(uint base, const unsigned char *mask, unsigned cha
 		// don't consider the tail of 0:es to be lost packets
 		// only unacked packets with acked packets after should
 		// be considered lost
-		OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(v);
+		OutgoingPacket *pkt = (OutgoingPacket*)circbuf_get(&outbuf, v);
 
 		// this may be an old (re-ordered) packet, and some of the
 		// packets in here may have been acked already. In which
@@ -1931,7 +1948,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 
 	for (int i = 0; i < acks; ++i) {
 		int seq = conn->seq_nr - conn->cur_window_packets + i;
-		OutgoingPacket *pkt = (OutgoingPacket*)conn->outbuf.get(seq);
+		OutgoingPacket *pkt = (OutgoingPacket*)circbuf_get(&conn->outbuf, seq);
 		if (pkt == 0 || pkt->transmissions == 0) continue;
 		assert((int)(pkt->payload) >= 0);
 		acked_bytes += pkt->payload;
@@ -2077,7 +2094,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 		// in the send queue
 		// this is especially likely to happen when the other end
 		// has the EACK send bug older versions of uTP had
-		while (conn->cur_window_packets > 0 && !conn->outbuf.get(conn->seq_nr - conn->cur_window_packets))
+		while (conn->cur_window_packets > 0 && !circbuf_get(&conn->outbuf, conn->seq_nr - conn->cur_window_packets))
 			conn->cur_window_packets--;
 
 #ifdef _DEBUG
@@ -2085,11 +2102,11 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 #endif
 
 		// this invariant should always be true
-		assert(conn->cur_window_packets == 0 || conn->outbuf.get(conn->seq_nr - conn->cur_window_packets));
+		assert(conn->cur_window_packets == 0 || circbuf_get(&conn->outbuf, conn->seq_nr - conn->cur_window_packets));
 
 		// flush Nagle
 		if (conn->cur_window_packets == 1) {
-			OutgoingPacket *pkt = (OutgoingPacket*)conn->outbuf.get(conn->seq_nr - 1);
+			OutgoingPacket *pkt = (OutgoingPacket*)circbuf_get(&conn->outbuf, conn->seq_nr - 1);
 			// do we still have quota?
 			if (pkt->transmissions == 0 &&
 				(!(USE_PACKET_PACING) || conn->send_quota / 100 >= (int32_t)pkt->length)) {
@@ -2112,7 +2129,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 			} else {
 				// resend the oldest packet and increment fast_resend_seq_nr
 				// to not allow another fast resend on it again
-				OutgoingPacket *pkt = (OutgoingPacket*)conn->outbuf.get(conn->seq_nr - conn->cur_window_packets);
+				OutgoingPacket *pkt = (OutgoingPacket*)circbuf_get(&conn->outbuf, conn->seq_nr - conn->cur_window_packets);
 				if (pkt && pkt->transmissions > 0) {
 					LOG_UTPV("0x%08x: Packet %u fast timeout-retry.", conn, conn->seq_nr - conn->cur_window_packets);
 #ifdef _DEBUG
@@ -2131,7 +2148,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 	}
 
 	// this invariant should always be true
-	assert(conn->cur_window_packets == 0 || conn->outbuf.get(conn->seq_nr - conn->cur_window_packets));
+	assert(conn->cur_window_packets == 0 || circbuf_get(&conn->outbuf, conn->seq_nr - conn->cur_window_packets));
 
 	LOG_UTPV("0x%08x: acks:%d acked_bytes:%u seq_nr:%u cur_window:%u cur_window_packets:%u quota:%d",
 			 conn, acks, (uint)acked_bytes, conn->seq_nr, (uint)conn->cur_window, conn->cur_window_packets,
@@ -2215,10 +2232,10 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 
 			// Check if there are additional buffers in the reorder buffers
 			// that need delivery.
-			unsigned char *p = (unsigned char*)conn->inbuf.get(conn->ack_nr+1);
+			unsigned char *p = (unsigned char*)circbuf_get(&conn->inbuf, conn->ack_nr+1);
 			if (p == NULL)
 				break;
-			conn->inbuf.put(conn->ack_nr+1, NULL);
+			circbuf_put(&conn->inbuf, conn->ack_nr+1, NULL);
 			count = *(uint*)p;
 			if (count > 0 && conn->state != CS_FIN_SENT) {
 				// Pass the bytes to the upper layer
@@ -2263,11 +2280,11 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 		// check if the packet is already in here, so that
 		// we don't end up looking at an older packet (since
 		// the indices wraps around).
-		conn->inbuf.ensure_size(pk_seq_nr + 1, seqnr + 1);
+		circbuf_ensure_size(&conn->inbuf, pk_seq_nr + 1, seqnr + 1);
 
 		// Has this packet already been received? (i.e. a duplicate)
 		// If that is the case, just discard it.
-		if (conn->inbuf.get(pk_seq_nr) != NULL) {
+		if (circbuf_get(&conn->inbuf, pk_seq_nr) != NULL) {
 #ifdef _DEBUG
 			++conn->_stats._nduprecv;
 #endif
@@ -2286,9 +2303,9 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 		// is valid. we have to add one to seqnr too, in order
 		// to make the circular buffer grow around the correct
 		// point (which is conn->ack_nr + 1).
-		assert(conn->inbuf.get(pk_seq_nr) == NULL);
+		assert(circbuf_get(&conn->inbuf, pk_seq_nr) == NULL);
 		assert((pk_seq_nr & conn->inbuf.mask) != ((conn->ack_nr+1) & conn->inbuf.mask));
-		conn->inbuf.put(pk_seq_nr, mem);
+		circbuf_put(&conn->inbuf, pk_seq_nr, mem);
 		conn->reorder_count++;
 
 		LOG_UTPV("0x%08x: Got out of order data reorder_count:%u len:%u (rb:%u)",
@@ -2466,7 +2483,7 @@ void UTP_Connect(UTPSocket *conn)
 
 	assert(conn->state == CS_IDLE);
 	assert(conn->cur_window_packets == 0);
-	assert(conn->outbuf.get(conn->seq_nr) == NULL);
+	assert(circbuf_get(&conn->outbuf, conn->seq_nr) == NULL);
 	assert(sizeof(PacketFormatV1) == 20);
 
 	conn->state = CS_SYN_SENT;
@@ -2540,8 +2557,8 @@ void UTP_Connect(UTPSocket *conn)
 	//		 conn, addrfmt(conn->addr, addrbuf), conn_seed);
 
 	// Remember the message in the outgoing queue.
-	conn->outbuf.ensure_size(conn->seq_nr, conn->cur_window_packets);
-	conn->outbuf.put(conn->seq_nr, pkt);
+	circbuf_ensure_size(&conn->outbuf, conn->seq_nr, conn->cur_window_packets);
+	circbuf_put(&conn->outbuf, conn->seq_nr, pkt);
 	conn->seq_nr++;
 	conn->cur_window_packets++;
 
