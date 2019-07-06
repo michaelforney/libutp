@@ -1391,7 +1391,7 @@ static void utp_check_timeouts(UTPSocket *conn)
 		break;
 	}
 
-	getout:
+	getout:;
 
 	// make sure we don't accumulate quota when we don't have
 	// anything to send
