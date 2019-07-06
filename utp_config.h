@@ -40,4 +40,4 @@ void utp_log(char const* fmt, ...)
 	puts("");
 	fflush(stdout);
 	*/
-};
+}
