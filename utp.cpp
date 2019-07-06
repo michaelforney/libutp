@@ -456,138 +456,139 @@ struct DelayHist {
 	uint32_t delay_base_time;
 
 	bool delay_base_initialized;
+};
+typedef struct DelayHist DelayHist;
 
-	void clear()
-	{
-		delay_base_initialized = false;
-		delay_base = 0;
-		cur_delay_idx = 0;
-		delay_base_idx = 0;
-		delay_base_time = g_current_ms;
-		for (size_t i = 0; i < CUR_DELAY_SIZE; i++) {
-			cur_delay_hist[i] = 0;
-		}
+void delayhist_clear(DelayHist *hist)
+{
+	hist->delay_base_initialized = false;
+	hist->delay_base = 0;
+	hist->cur_delay_idx = 0;
+	hist->delay_base_idx = 0;
+	hist->delay_base_time = g_current_ms;
+	for (size_t i = 0; i < CUR_DELAY_SIZE; i++) {
+		hist->cur_delay_hist[i] = 0;
+	}
+	for (size_t i = 0; i < DELAY_BASE_HISTORY; i++) {
+		hist->delay_base_hist[i] = 0;
+	}
+}
+
+void delayhist_shift(DelayHist *hist, const uint32_t offset)
+{
+	// the offset should never be "negative"
+	// assert(offset < 0x10000000);
+
+	// increase all of our base delays by this amount
+	// this is used to take clock skew into account
+	// by observing the other side's changes in its base_delay
+	for (size_t i = 0; i < DELAY_BASE_HISTORY; i++) {
+		hist->delay_base_hist[i] += offset;
+	}
+	hist->delay_base += offset;
+}
+
+void delayhist_add_sample(DelayHist *hist, const uint32_t sample)
+{
+	// The two clocks (in the two peers) are assumed not to
+	// progress at the exact same rate. They are assumed to be
+	// drifting, which causes the delay samples to contain
+	// a systematic error, either they are under-
+	// estimated or over-estimated. This is why we update the
+	// delay_base every two minutes, to adjust for this.
+
+	// This means the values will keep drifting and eventually wrap.
+	// We can cross the wrapping boundry in two directions, either
+	// going up, crossing the highest value, or going down, crossing 0.
+
+	// if the delay_base is close to the max value and sample actually
+	// wrapped on the other end we would see something like this:
+	// delay_base = 0xffffff00, sample = 0x00000400
+	// sample - delay_base = 0x500 which is the correct difference
+
+	// if the delay_base is instead close to 0, and we got an even lower
+	// sample (that will eventually update the delay_base), we may see
+	// something like this:
+	// delay_base = 0x00000400, sample = 0xffffff00
+	// sample - delay_base = 0xfffffb00
+	// this needs to be interpreted as a negative number and the actual
+	// recorded delay should be 0.
+
+	// It is important that all arithmetic that assume wrapping
+	// is done with unsigned intergers. Signed integers are not guaranteed
+	// to wrap the way unsigned integers do. At least GCC takes advantage
+	// of this relaxed rule and won't necessarily wrap signed ints.
+
+	// remove the clock offset and propagation delay.
+	// delay base is min of the sample and the current
+	// delay base. This min-operation is subject to wrapping
+	// and care needs to be taken to correctly choose the
+	// true minimum.
+
+	// specifically the problem case is when delay_base is very small
+	// and sample is very large (because it wrapped past zero), sample
+	// needs to be considered the smaller
+
+	if (!hist->delay_base_initialized) {
+		// delay_base being 0 suggests that we haven't initialized
+		// it or its history with any real measurements yet. Initialize
+		// everything with this sample.
 		for (size_t i = 0; i < DELAY_BASE_HISTORY; i++) {
-			delay_base_hist[i] = 0;
+			// if we don't have a value, set it to the current sample
+			hist->delay_base_hist[i] = sample;
+			continue;
 		}
+		hist->delay_base = sample;
+		hist->delay_base_initialized = true;
 	}
 
-	void shift(const uint32_t offset)
-	{
-		// the offset should never be "negative"
-		// assert(offset < 0x10000000);
-
-		// increase all of our base delays by this amount
-		// this is used to take clock skew into account
-		// by observing the other side's changes in its base_delay
-		for (size_t i = 0; i < DELAY_BASE_HISTORY; i++) {
-			delay_base_hist[i] += offset;
-		}
-		delay_base += offset;
+	if (wrapping_compare_less(sample, hist->delay_base_hist[hist->delay_base_idx])) {
+		// sample is smaller than the current delay_base_hist entry
+		// update it
+		hist->delay_base_hist[hist->delay_base_idx] = sample;
 	}
 
-	void add_sample(const uint32_t sample)
-	{
-		// The two clocks (in the two peers) are assumed not to
-		// progress at the exact same rate. They are assumed to be
-		// drifting, which causes the delay samples to contain
-		// a systematic error, either they are under-
-		// estimated or over-estimated. This is why we update the
-		// delay_base every two minutes, to adjust for this.
+	// is sample lower than delay_base? If so, update delay_base
+	if (wrapping_compare_less(sample, hist->delay_base)) {
+		// sample is smaller than the current delay_base
+		// update it
+		hist->delay_base = sample;
+	}
 
-		// This means the values will keep drifting and eventually wrap.
-		// We can cross the wrapping boundry in two directions, either
-		// going up, crossing the highest value, or going down, crossing 0.
-
-		// if the delay_base is close to the max value and sample actually
-		// wrapped on the other end we would see something like this:
-		// delay_base = 0xffffff00, sample = 0x00000400
-		// sample - delay_base = 0x500 which is the correct difference
-
-		// if the delay_base is instead close to 0, and we got an even lower
-		// sample (that will eventually update the delay_base), we may see
-		// something like this:
-		// delay_base = 0x00000400, sample = 0xffffff00
-		// sample - delay_base = 0xfffffb00
-		// this needs to be interpreted as a negative number and the actual
-		// recorded delay should be 0.
-
-		// It is important that all arithmetic that assume wrapping
-		// is done with unsigned intergers. Signed integers are not guaranteed
-		// to wrap the way unsigned integers do. At least GCC takes advantage
-		// of this relaxed rule and won't necessarily wrap signed ints.
-
-		// remove the clock offset and propagation delay.
-		// delay base is min of the sample and the current
-		// delay base. This min-operation is subject to wrapping
-		// and care needs to be taken to correctly choose the
-		// true minimum.
-
-		// specifically the problem case is when delay_base is very small
-		// and sample is very large (because it wrapped past zero), sample
-		// needs to be considered the smaller
-
-		if (!delay_base_initialized) {
-			// delay_base being 0 suggests that we haven't initialized
-			// it or its history with any real measurements yet. Initialize
-			// everything with this sample.
-			for (size_t i = 0; i < DELAY_BASE_HISTORY; i++) {
-				// if we don't have a value, set it to the current sample
-				delay_base_hist[i] = sample;
-				continue;
-			}
-			delay_base = sample;
-			delay_base_initialized = true;
-		}
-
-		if (wrapping_compare_less(sample, delay_base_hist[delay_base_idx])) {
-			// sample is smaller than the current delay_base_hist entry
-			// update it
-			delay_base_hist[delay_base_idx] = sample;
-		}
-
-		// is sample lower than delay_base? If so, update delay_base
-		if (wrapping_compare_less(sample, delay_base)) {
-			// sample is smaller than the current delay_base
-			// update it
-			delay_base = sample;
-		}
-		
-		// this operation may wrap, and is supposed to
-		const uint32_t delay = sample - delay_base;
-		// sanity check. If this is triggered, something fishy is going on
-		// it means the measured sample was greater than 32 seconds!
+	// this operation may wrap, and is supposed to
+	const uint32_t delay = sample - hist->delay_base;
+	// sanity check. If this is triggered, something fishy is going on
+	// it means the measured sample was greater than 32 seconds!
 //		assert(delay < 0x2000000);
 
-		cur_delay_hist[cur_delay_idx] = delay;
-		cur_delay_idx = (cur_delay_idx + 1) % CUR_DELAY_SIZE;
+	hist->cur_delay_hist[hist->cur_delay_idx] = delay;
+	hist->cur_delay_idx = (hist->cur_delay_idx + 1) % CUR_DELAY_SIZE;
 
-		// once every minute
-		if (g_current_ms - delay_base_time > 60 * 1000) {
-			delay_base_time = g_current_ms;
-			delay_base_idx = (delay_base_idx + 1) % DELAY_BASE_HISTORY;
-			// clear up the new delay base history spot by initializing
-			// it to the current sample, then update it 
-			delay_base_hist[delay_base_idx] = sample;
-			delay_base = delay_base_hist[0];
-			// Assign the lowest delay in the last 2 minutes to delay_base
-			for (size_t i = 0; i < DELAY_BASE_HISTORY; i++) {
-				if (wrapping_compare_less(delay_base_hist[i], delay_base))
-					delay_base = delay_base_hist[i];
-			}
+	// once every minute
+	if (g_current_ms - hist->delay_base_time > 60 * 1000) {
+		hist->delay_base_time = g_current_ms;
+		hist->delay_base_idx = (hist->delay_base_idx + 1) % DELAY_BASE_HISTORY;
+		// clear up the new delay base history spot by initializing
+		// it to the current sample, then update it
+		hist->delay_base_hist[hist->delay_base_idx] = sample;
+		hist->delay_base = hist->delay_base_hist[0];
+		// Assign the lowest delay in the last 2 minutes to delay_base
+		for (size_t i = 0; i < DELAY_BASE_HISTORY; i++) {
+			if (wrapping_compare_less(hist->delay_base_hist[i], hist->delay_base))
+				hist->delay_base = hist->delay_base_hist[i];
 		}
 	}
+}
 
-	uint32_t get_value()
-	{
-		uint32_t value = UINT_MAX;
-		for (size_t i = 0; i < CUR_DELAY_SIZE; i++) {
-			value = min(cur_delay_hist[i], value);
-		}
-		// value could be UINT_MAX if we have no samples yet...
-		return value;
+uint32_t delayhist_get_value(DelayHist *hist)
+{
+	uint32_t value = UINT_MAX;
+	for (size_t i = 0; i < CUR_DELAY_SIZE; i++) {
+		value = min(hist->cur_delay_hist[i], value);
 	}
-};
+	// value could be UINT_MAX if we have no samples yet...
+	return value;
+}
 
 struct UTPSocket {
 	PackedSockAddr addr;
@@ -1473,7 +1474,7 @@ int UTPSocket::ack_packet(uint16_t seq)
 			rtt = rtt - rtt/8 + ertt/8;
 			// sanity check. rtt should never be more than 6 seconds
 //			assert(rtt < 6000);
-			rtt_hist.add_sample(ertt);
+			delayhist_add_sample(&rtt_hist, ertt);
 		}
 		rto = max(rtt + rtt_var * 4, 500u);
 		LOG_UTPV("0x%08x: rtt:%u avg:%u var:%u rto:%u",
@@ -1678,7 +1679,7 @@ void UTPSocket::apply_ledbat_ccontrol(size_t bytes_acked, uint32_t actual_delay,
 	// variable is the RTT in microseconds
 	
 	assert(min_rtt >= 0);
-	int32_t our_delay = min(our_hist.get_value(), uint32_t(min_rtt));
+	int32_t our_delay = min(delayhist_get_value(&our_hist), uint32_t(min_rtt));
 	assert(our_delay != INT_MAX);
 	assert(our_delay >= 0);
 
@@ -1748,14 +1749,14 @@ void UTPSocket::apply_ledbat_ccontrol(size_t bytes_acked, uint32_t actual_delay,
 			"delay_base:%u delay_sum:%d target_delay:%d acked_bytes:%u cur_window:%u "
 			"scaled_gain:%f rtt:%u rate:%u quota:%d wnduser:%u rto:%u timeout:%d get_microseconds:" I64u " "
 			"cur_window_packets:%u packet_size:%u their_delay_base:%u their_actual_delay:%u",
-			this, actual_delay, our_delay / 1000, their_hist.get_value() / 1000,
+			this, actual_delay, our_delay / 1000, delayhist_get_value(&their_hist) / 1000,
 			(int)off_target / 1000, (uint)(max_window),  our_hist.delay_base,
-			(our_delay + their_hist.get_value()) / 1000, target / 1000, (uint)bytes_acked,
+			(our_delay + delayhist_get_value(&their_hist)) / 1000, target / 1000, (uint)bytes_acked,
 			(uint)(cur_window - bytes_acked), (float)(scaled_gain), rtt,
 			(uint)(max_window * 1000 / (rtt_hist.delay_base?rtt_hist.delay_base:50)),
 			send_quota / 100, (uint)max_window_user, rto, (int)(rto_timeout - g_current_ms),
 			UTP_GetMicroseconds(), cur_window_packets, (uint)get_packet_size(),
-			their_hist.delay_base, their_hist.delay_base + their_hist.get_value());
+			their_hist.delay_base, their_hist.delay_base + delayhist_get_value(&their_hist));
 }
 
 static void UTP_RegisterRecvPacket(UTPSocket *conn, size_t len)
@@ -1980,7 +1981,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 	const uint32_t their_delay = (uint32_t)(p == 0 ? 0 : time - p);
 	conn->reply_micro = their_delay;
 	uint32_t prev_delay_base = conn->their_hist.delay_base;
-	if (their_delay != 0) conn->their_hist.add_sample(their_delay);
+	if (their_delay != 0) delayhist_add_sample(&conn->their_hist, their_delay);
 
 	// if their new delay base is less than their previous one
 	// we should shift our delay base in the other direction in order
@@ -1989,7 +1990,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 		wrapping_compare_less(conn->their_hist.delay_base, prev_delay_base)) {
 		// never adjust more than 10 milliseconds
 		if (prev_delay_base - conn->their_hist.delay_base <= 10000) {
-			conn->our_hist.shift(prev_delay_base - conn->their_hist.delay_base);
+			delayhist_shift(&conn->our_hist, prev_delay_base - conn->their_hist.delay_base);
 		}
 	}
 
@@ -2002,7 +2003,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 	// know what it is. We can't update out history unless
 	// we have a true measured sample
 	prev_delay_base = conn->our_hist.delay_base;
-	if (actual_delay != 0) conn->our_hist.add_sample(actual_delay);
+	if (actual_delay != 0) delayhist_add_sample(&conn->our_hist, actual_delay);
 
 	// if our new delay base is less than our previous one
 	// we should shift the other end's delay base in the other
@@ -2025,8 +2026,8 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 
 	// if the delay estimate exceeds the RTT, adjust the base_delay to
 	// compensate
-	if (conn->our_hist.get_value() > uint32_t(min_rtt)) {
-		conn->our_hist.shift(conn->our_hist.get_value() - min_rtt);
+	if (delayhist_get_value(&conn->our_hist) > uint32_t(min_rtt)) {
+		delayhist_shift(&conn->our_hist, delayhist_get_value(&conn->our_hist) - min_rtt);
 	}
 
 	// only apply the congestion controller on acks
@@ -2384,8 +2385,8 @@ UTPSocket *UTP_Create(SendToProc *send_to_proc, void *send_to_userdata, const st
 	g_current_ms = UTP_GetMilliseconds();
 
 	UTP_SetCallbacks(conn, NULL, NULL);
-	conn->our_hist.clear();
-	conn->their_hist.clear();
+	delayhist_clear(&conn->our_hist);
+	delayhist_clear(&conn->their_hist);
 	conn->rto = 3000;
 	conn->rtt_var = 800;
 	conn->seq_nr = 1;
@@ -2873,8 +2874,8 @@ void UTP_GetDelays(UTPSocket *conn, int32_t *ours, int32_t *theirs, uint32_t *ag
 {
 	assert(conn);
 
-	if (ours) *ours = conn->our_hist.get_value();
-	if (theirs) *theirs = conn->their_hist.get_value();
+	if (ours) *ours = delayhist_get_value(&conn->our_hist);
+	if (theirs) *theirs = delayhist_get_value(&conn->their_hist);
 	if (age) *age = g_current_ms - conn->last_measured_delay;
 }
 
