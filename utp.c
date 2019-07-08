@@ -871,8 +871,8 @@ static void utp_send_ack(UTPSocket *conn, bool synack)
 	PacketFormatExtensions pfe;
 	memset(&pfe, 0, sizeof(pfe));
 	PacketFormatExtensionsV1 *pfe1 = (PacketFormatExtensionsV1 *)&pfe;
-	PacketFormatAck *pfa = (PacketFormatAck *)&pfe1;
-	PacketFormatAckV1 *pfa1 = (PacketFormatAckV1 *)&pfe1;
+	PacketFormatAck *pfa = (PacketFormatAck *)pfe1;
+	PacketFormatAckV1 *pfa1 = (PacketFormatAckV1 *)pfe1;
 
 	size_t len;
 	conn->last_rcv_win = utp_get_rcv_window(conn);
