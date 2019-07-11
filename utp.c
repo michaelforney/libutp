@@ -1316,7 +1316,7 @@ static void utp_check_timeouts(UTPSocket *conn)
 
 			// rate = min_rate
 			conn->max_window = utp_get_packet_size(conn);
-			conn->send_quota = max((int32_t)conn->max_window * 100, conn->send_quota);
+			conn->send_quota = smax((int32_t)conn->max_window * 100, conn->send_quota);
 
 			// every packet should be considered lost
 			for (int i = 0; i < conn->cur_window_packets; ++i) {
@@ -1337,7 +1337,7 @@ static void utp_check_timeouts(UTPSocket *conn)
 			if (conn->cur_window_packets > 0) {
 				OutgoingPacket *pkt = (OutgoingPacket*)circbuf_get(&conn->outbuf, conn->seq_nr - conn->cur_window_packets);
 				assert(pkt);
-				conn->send_quota = max((int32_t)pkt->length * 100, conn->send_quota);
+				conn->send_quota = smax((int32_t)pkt->length * 100, conn->send_quota);
 
 				// Re-send the packet.
 				utp_send_packet(conn, pkt);
@@ -1388,7 +1388,7 @@ static void utp_check_timeouts(UTPSocket *conn)
 
 	// make sure we don't accumulate quota when we don't have
 	// anything to send
-	int32_t limit = max((int32_t)conn->max_window / 2, 5 * (int32_t)utp_get_packet_size(conn)) * 100;
+	int32_t limit = smax((int32_t)conn->max_window / 2, 5 * (int32_t)utp_get_packet_size(conn)) * 100;
 	if (conn->send_quota > limit) conn->send_quota = limit;
 }
 
@@ -1480,7 +1480,7 @@ static size_t utp_selective_ack_bytes(UTPSocket *conn, uint base, const unsigned
 		if (bits >= 0 && mask[bits>>3] & (1 << (bits & 7))) {
 			assert((int)(pkt->payload) >= 0);
 			acked_bytes += pkt->payload;
-			*min_rtt = min(*min_rtt, (int64_t)(UTP_GetMicroseconds() - pkt->time_sent));
+			*min_rtt = smin(*min_rtt, (int64_t)(UTP_GetMicroseconds() - pkt->time_sent));
 			continue;
 		}
 	} while (--bits >= -1);
@@ -1914,7 +1914,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 		if (pkt == 0 || pkt->transmissions == 0) continue;
 		assert((int)(pkt->payload) >= 0);
 		acked_bytes += pkt->payload;
-		min_rtt = min(min_rtt, (int64_t)(UTP_GetMicroseconds() - pkt->time_sent));
+		min_rtt = smin(min_rtt, (int64_t)(UTP_GetMicroseconds() - pkt->time_sent));
 	}
 	
 	// count bytes acked by EACK

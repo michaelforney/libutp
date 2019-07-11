@@ -36,19 +36,27 @@
 #undef min
 #undef max
 
-#define min(a, b) ({ \
-	__typeof__(a) a_ = (a); \
-	__typeof__(b) b_ = (b); \
-	(void)(&a_ == &b_); \
-	a_ < b_ ? a_ : b_; \
-})
+static inline uintmax_t min(uintmax_t a, uintmax_t b)
+{
+	return a < b ? a : b;
+}
 
-#define max(a, b) ({ \
-	__typeof__(a) a_ = (a); \
-	__typeof__(b) b_ = (b); \
-	(void)(&a_ == &b_); \
-	a_ > b_ ? a_ : b_; \
-})
+static inline uintmax_t max(uintmax_t a, uintmax_t b)
+{
+	return a > b ? a : b;
+}
+
+/* XXX: Is this really needed? Can conn->send_quota ever be negative? */
+static inline intmax_t smin(intmax_t a, intmax_t b)
+{
+	return a < b ? a : b;
+}
+
+/* XXX: Is this really needed? Can rtt ever be negative? */
+static inline intmax_t smax(intmax_t a, intmax_t b)
+{
+	return a > b ? a : b;
+}
 
 #if (defined(__SVR4) && defined(__sun))
 #pragma pack(1)
