@@ -58,19 +58,7 @@ static inline intmax_t smax(intmax_t a, intmax_t b)
 	return a > b ? a : b;
 }
 
-#if (defined(__SVR4) && defined(__sun))
-#pragma pack(1)
-#else
-#pragma pack(push,1)
-#endif
-
 typedef uint32_t uint32_big;
 typedef uint16_t uint16_big;
-
-#if (defined(__SVR4) && defined(__sun))
-#pragma pack(0)
-#else
-#pragma pack(pop)
-#endif
 
 #endif //__TEMPLATES_H__
