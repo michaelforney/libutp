@@ -14,4 +14,4 @@ add_library(${PROJECT_NAME} STATIC
 )
 
 install(TARGETS ${PROJECT_NAME} DESTINATION lib)
-install(FILES utp.h utypes.h DESTINATION include/libutp)
+install(FILES utp.h DESTINATION include/libutp)
