@@ -1,3 +1,7 @@
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // This should return the MTU to the destination
 uint16_t UTP_GetUDPMTU(const struct sockaddr *remote, socklen_t remotelen);
 // This should return the number of bytes of UDP overhead for one packet to the
@@ -14,3 +18,6 @@ void UTP_DelaySample(const struct sockaddr *remote, int sample_ms);
 // Should return the max packet size to use when sending to the given address
 size_t UTP_GetPacketSizeForAddr(const struct sockaddr *remote);
 
+#ifdef __cplusplus
+}
+#endif
