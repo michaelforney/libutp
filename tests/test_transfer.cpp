@@ -28,7 +28,7 @@ typedef sockaddr_storage SOCKADDR_STORAGE;
 #define utassert assert
 #define utassert_failmsg(expr,failstmt) if (!(expr)) { failstmt; utassert(#expr); }
 
-extern uint32 g_current_ms;
+extern uint32_t g_current_ms;
 
 struct utp_socket {
 
@@ -39,8 +39,8 @@ struct utp_socket {
 	size_t write(char const* buf, size_t count);
 	void flush_write();
 
-	static void utp_read(void* socket, const byte* bytes, size_t count);
-	static void on_utp_write(void *socket, byte *bytes, size_t count);
+	static void utp_read(void* socket, const unsigned char* bytes, size_t count);
+	static void on_utp_write(void *socket, unsigned char *bytes, size_t count);
 	static void on_utp_state(void *socket, int state);
 	static void on_utp_error(void *socket, int errcode);
 	static void on_utp_overhead(void *socket, bool send, size_t count, int type) {}
@@ -78,7 +78,7 @@ struct TestUdpOutgoing {
 	SOCKADDR_STORAGE addr;
 	socklen_t addrlen;
 	size_t len;
-	byte mem[1];
+	unsigned char mem[1];
 };
 
 struct test_manager
@@ -99,8 +99,8 @@ struct test_manager
 		incoming->_writable = true;
 	}
 
-	void Send(const byte *p, size_t len, const struct sockaddr *to, socklen_t tolen);
-	void Flush(uint32 start_time, uint32 max_time);
+	void Send(const unsigned char *p, size_t len, const struct sockaddr *to, socklen_t tolen);
+	void Flush(uint32_t start_time, uint32_t max_time);
 	void clear();
 	void bind(test_manager* receiver)
 	{
@@ -133,12 +133,12 @@ void test_incoming_proc(void *userdata, UTPSocket* conn)
 	((test_manager*)userdata)->IncomingUTP(conn);
 }
 
-void test_send_to_proc(void *userdata, const byte *p, size_t len, const struct sockaddr *to, socklen_t tolen)
+void test_send_to_proc(void *userdata, const unsigned char *p, size_t len, const struct sockaddr *to, socklen_t tolen)
 {
 	((test_manager*)userdata)->Send(p, len, to, tolen);
 }
 
-void test_manager::Flush(uint32 start_time, uint32 max_time)
+void test_manager::Flush(uint32_t start_time, uint32_t max_time)
 {
 	//printf("In test_manager::Flush");
 	_send_buffer.Sort(&ComparePacketTimestamp);
@@ -147,7 +147,7 @@ void test_manager::Flush(uint32 start_time, uint32 max_time)
 		TestUdpOutgoing *uo = _send_buffer[i];
 //		utassert(uo);
 
-		if ((uint32)uo->timestamp > g_current_ms) continue;
+		if ((uint32_t)uo->timestamp > g_current_ms) continue;
 
 		if (_receiver) {
 			// Lookup the right UTP socket that can handle this message
@@ -173,7 +173,7 @@ void test_manager::clear()
 	_send_buffer.Clear();
 }
 
-void test_manager::Send(const byte *p, size_t len, const struct sockaddr *to, socklen_t tolen)
+void test_manager::Send(const unsigned char *p, size_t len, const struct sockaddr *to, socklen_t tolen)
 {
 	if (_loss_every > 0 && _loss_counter == _loss_every) {
 		_loss_counter = 0;
@@ -224,7 +224,7 @@ utp_socket::~utp_socket()
 	utassert(_sock == NULL);
 }
 
-void utp_socket::utp_read(void* socket, const byte* bytes, size_t count)
+void utp_socket::utp_read(void* socket, const unsigned char* bytes, size_t count)
 {
 	utp_socket* s = (utp_socket*)socket;
 	//printf("received %d\n", count);
@@ -234,7 +234,7 @@ void utp_socket::utp_read(void* socket, const byte* bytes, size_t count)
 }
 
 // called when the socket is ready to write count bytes
-void utp_socket::on_utp_write(void *socket, byte *bytes, size_t count)
+void utp_socket::on_utp_write(void *socket, unsigned char *bytes, size_t count)
 {
 	utp_socket* s = (utp_socket*)socket;
 	//printf("utp_socket::write %x sock: %x\n", s, s->_sock);
@@ -326,8 +326,8 @@ void tick()
 		UTP_CheckTimeouts();
 	}
 
-	uint32 start_time = UTP_GetMilliseconds();
-	uint32 max_time = 1000;
+	uint32_t start_time = UTP_GetMilliseconds();
+	uint32_t max_time = 1000;
 
 	send_udp_manager->Flush(start_time, max_time);
 	receive_udp_manager->Flush(start_time, max_time);
@@ -445,7 +445,7 @@ void test_transfer(int flags)
 	incoming = NULL;
 }
 
-bool wrapping_compare_less(uint32 lhs, uint32 rhs);
+bool wrapping_compare_less(uint32_t lhs, uint32_t rhs);
 
 int main()
 {
