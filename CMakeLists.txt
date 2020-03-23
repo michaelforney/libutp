@@ -1,11 +1,7 @@
 cmake_minimum_required(VERSION 2.8)
 project(utp C)
 
-if(WIN32)
-    set(${PROJECT_NAME}_ADD_SOURCES
-        win32_inet_ntop.c
-    )
-else()
+if(NOT WIN32)
     add_definitions(-DPOSIX)
 endif()
 

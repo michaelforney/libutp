@@ -13,8 +13,6 @@
 #include <limits.h> // for UINT_MAX
 
 #ifdef WIN32
-#include "win32_inet_ntop.h"
-
 // newer versions of MSVC define these in errno.h
 #ifndef ECONNRESET
 #define ECONNRESET WSAECONNRESET
