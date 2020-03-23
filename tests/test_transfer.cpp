@@ -445,7 +445,7 @@ void test_transfer(int flags)
 	incoming = NULL;
 }
 
-bool wrapping_compare_less(uint32_t lhs, uint32_t rhs);
+extern "C" bool wrapping_compare_less(uint32_t lhs, uint32_t rhs);
 
 int main()
 {
