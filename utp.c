@@ -2288,7 +2288,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const unsigned char *packet, size_t 
 	return (size_t)(packet_end - data);
 }
 
-inline bool UTP_IsV1(PacketFormatV1 const* pf)
+static inline bool UTP_IsV1(PacketFormatV1 const* pf)
 {
 	return packetformatv1_version(pf) == 1 && packetformatv1_type(pf) < ST_NUM_STATES && pf->ext < 3;
 }
