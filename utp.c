@@ -85,7 +85,7 @@ uint32_t g_current_ms;
 //   1: Terminating null byte
 char addrbuf[65];
 char addrbuf2[65];
-#define addrfmt(x, s) packedsockaddr_fmt(x, s, sizeof(s))
+#define addrfmt(x, s) sockaddr_fmt(x, s, sizeof(s))
 
 #if (defined(__SVR4) && defined(__sun))
 #pragma pack(1)
@@ -93,110 +93,56 @@ char addrbuf2[65];
 #pragma pack(push,1)
 #endif
 
-struct PACKED_ATTRIBUTE PackedSockAddr {
-
-	// The values are always stored here in network byte order
-	union {
-		unsigned char _in6[16];		// IPv6
-		uint16_t _in6w[8];		// IPv6, word based (for convenience)
-		uint32_t _in6d[4];		// Dword access
-		struct in6_addr _in6addr;	// For convenience
-	} _in;
-
-	// Host byte order
-	uint16_t _port;
-
-#define _sin4 _in._in6d[3]	// IPv4 is stored where it goes if mapped
-
-#define _sin6 _in._in6
-#define _sin6w _in._in6w
-#define _sin6d _in._in6d
-} ALIGNED_ATTRIBUTE(4);
-typedef struct PackedSockAddr PackedSockAddr;
-
-unsigned char packedsockaddr_get_family(const PackedSockAddr *addr)
-{
-	return (IN6_IS_ADDR_V4MAPPED(&addr->_in._in6addr) != 0) ? AF_INET : AF_INET6;
-}
-
-bool packedsockaddr_equal(const PackedSockAddr *lhs, const PackedSockAddr *rhs)
-{
-	if (lhs == rhs)
-		return true;
-	if (lhs->_port != rhs->_port)
-		return false;
-	return memcmp(lhs->_sin6, rhs->_sin6, sizeof(lhs->_sin6)) == 0;
-}
-
-void packedsockaddr_set(PackedSockAddr *addr, const struct sockaddr_storage* sa, socklen_t len)
-{
-	if (sa->ss_family == AF_INET) {
-		assert(len >= sizeof(struct sockaddr_in));
-		const struct sockaddr_in *sin = (struct sockaddr_in *)sa;
-		addr->_sin6w[0] = 0;
-		addr->_sin6w[1] = 0;
-		addr->_sin6w[2] = 0;
-		addr->_sin6w[3] = 0;
-		addr->_sin6w[4] = 0;
-		addr->_sin6w[5] = 0xffff;
-		addr->_sin4 = sin->sin_addr.s_addr;
-		addr->_port = ntohs(sin->sin_port);
-	} else {
-		assert(len >= sizeof(struct sockaddr_in6));
-		const struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)sa;
-		addr->_in._in6addr = sin6->sin6_addr;
-		addr->_port = ntohs(sin6->sin6_port);
-	}
-}
-
-struct sockaddr_storage packedsockaddr_get_sockaddr_storage(const PackedSockAddr *addr, socklen_t *len)
-{
-	struct sockaddr_storage sa;
-	const unsigned char family = packedsockaddr_get_family(addr);
-	if (family == AF_INET) {
-		struct sockaddr_in *sin = (struct sockaddr_in *)&sa;
-		if (len) *len = sizeof(struct sockaddr_in);
-		memset(sin, 0, sizeof(struct sockaddr_in));
-		sin->sin_family = family;
-		sin->sin_port = htons(addr->_port);
-		sin->sin_addr.s_addr = addr->_sin4;
-	} else {
-		struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&sa;
-		memset(sin6, 0, sizeof(struct sockaddr_in6));
-		if (len) *len = sizeof(struct sockaddr_in6);
-		sin6->sin6_family = family;
-		sin6->sin6_addr = addr->_in._in6addr;
-		sin6->sin6_port = htons(addr->_port);
-	}
-	return sa;
-}
-
-const char *packedsockaddr_fmt(const PackedSockAddr *addr, char *s, size_t len)
+const char *sockaddr_fmt(const struct sockaddr *sa, char *s, size_t len)
 {
 	memset(s, 0, len);
-	const unsigned char family = packedsockaddr_get_family(addr);
 	char *i;
-	if (family == AF_INET) {
-		inet_ntop(family, (uint32_t*)&addr->_sin4, s, len);
+	unsigned port;
+	if (sa->sa_family == AF_INET) {
+		const struct sockaddr_in *sin = (const struct sockaddr_in *)sa;
+		inet_ntop(AF_INET, &sin->sin_addr, s, len);
 		i = s;
 		while (*++i) {}
+		port = ntohs(sin->sin_port);
 	} else {
+		const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)sa;
 		i = s;
 		*i++ = '[';
-		inet_ntop(family, (struct in6_addr*)&addr->_in._in6addr, i, len-1);
+		inet_ntop(AF_INET6, &sin6->sin6_addr, i, len-1);
 		while (*++i) {}
 		*i++ = ']';
+		port = ntohs(sin6->sin6_port);
 	}
-	snprintf(i, len - (i-s), ":%u", addr->_port);
+	snprintf(i, len - (i-s), ":%u", port);
 	return s;
 }
 
+bool sockaddr_equal(const struct sockaddr *lhs, const struct sockaddr *rhs)
+{
+	if (lhs == rhs)
+		return true;
+	if (lhs->sa_family != rhs->sa_family)
+		return false;
+	if (lhs->sa_family == AF_INET) {
+		const struct sockaddr_in *lhs_in = (struct sockaddr_in *)lhs;
+		const struct sockaddr_in *rhs_in = (struct sockaddr_in *)rhs;
+		return lhs_in->sin_port == rhs_in->sin_port &&
+		       memcmp(&lhs_in->sin_addr, &rhs_in->sin_addr, sizeof(lhs_in->sin_addr)) == 0;
+	} else {
+		const struct sockaddr_in6 *lhs_in6 = (struct sockaddr_in6 *)lhs;
+		const struct sockaddr_in6 *rhs_in6 = (struct sockaddr_in6 *)rhs;
+		return lhs_in6->sin6_port == rhs_in6->sin6_port &&
+		       memcmp(&lhs_in6->sin6_addr, &rhs_in6->sin6_addr, sizeof(lhs_in6->sin6_addr)) == 0;
+	}
+}
+
 struct RST_Info {
-	PackedSockAddr addr;
+	struct sockaddr_storage addr;
+	socklen_t addrlen;
 	uint32_t connid;
 	uint32_t timestamp;
 	uint16_t ack_nr;
-} ALIGNED_ATTRIBUTE(4);
+};
 typedef struct RST_Info RST_Info;
 
 // these packet sizes are including the uTP header wich
@@ -585,7 +531,8 @@ uint32_t delayhist_get_value(DelayHist *hist)
 }
 
 struct UTPSocket {
-	PackedSockAddr addr;
+	struct sockaddr_storage addr;
+	socklen_t addrlen;
 
 	size_t idx;
 
@@ -764,16 +711,12 @@ static void utp_sent_ack(UTPSocket *conn)
 
 static size_t utp_get_udp_mtu(const UTPSocket *conn)
 {
-	socklen_t len;
-	struct sockaddr_storage sa = packedsockaddr_get_sockaddr_storage(&conn->addr, &len);
-	return UTP_GetUDPMTU((const struct sockaddr *)&sa, len);
+	return UTP_GetUDPMTU((const struct sockaddr *)&conn->addr, conn->addrlen);
 }
 
 static size_t utp_get_udp_overhead(const UTPSocket *conn)
 {
-	socklen_t len;
-	struct sockaddr_storage sa = packedsockaddr_get_sockaddr_storage(&conn->addr, &len);
-	return UTP_GetUDPOverhead((const struct sockaddr *)&sa, len);
+	return UTP_GetUDPOverhead((const struct sockaddr *)&conn->addr, conn->addrlen);
 }
 
 static size_t utp_get_overhead(const UTPSocket *conn)
@@ -806,12 +749,10 @@ static void UTP_RegisterSentPacket(size_t length) {
 	}
 }
 
-static void send_to_addr(SendToProc *send_to_proc, void *send_to_userdata, const unsigned char *p, size_t len, const PackedSockAddr *addr)
+static void send_to_addr(SendToProc *send_to_proc, void *send_to_userdata, const unsigned char *p, size_t len, const struct sockaddr *addr, socklen_t addrlen)
 {
-	socklen_t tolen;
-	struct sockaddr_storage to = packedsockaddr_get_sockaddr_storage(addr, &tolen);
 	UTP_RegisterSentPacket(len);
-	send_to_proc(send_to_userdata, p, len, (const struct sockaddr *)&to, tolen);
+	send_to_proc(send_to_userdata, p, len, addr, addrlen);
 }
 
 static void utp_send_data(UTPSocket *conn, PacketFormat* b, size_t length, enum bandwidth_type_t type)
@@ -857,7 +798,7 @@ static void utp_send_data(UTPSocket *conn, PacketFormat* b, size_t length, enum 
 			 this, addrfmt(&addr, addrbuf), (uint)length, conn_id_send, time, reply_micro, flagnames[flags],
 			 seq_nr, ack_nr);
 #endif
-	send_to_addr(conn->send_to_proc, conn->send_to_userdata, (const unsigned char*)b, length, &conn->addr);
+	send_to_addr(conn->send_to_proc, conn->send_to_userdata, (const unsigned char*)b, length, (const struct sockaddr *)&conn->addr, conn->addrlen);
 }
 
 static void utp_send_ack(UTPSocket *conn, bool synack)
@@ -967,7 +908,8 @@ static void utp_send_keep_alive(UTPSocket *conn)
 }
 
 static void utp_send_rst(SendToProc *send_to_proc, void *send_to_userdata,
-						 const PackedSockAddr *addr, uint32_t conn_id_send, uint16_t ack_nr, uint16_t seq_nr, unsigned char version)
+                         const struct sockaddr *addr, socklen_t addrlen,
+                         uint32_t conn_id_send, uint16_t ack_nr, uint16_t seq_nr, unsigned char version)
 {
 	PacketFormat pf;
 	memset(&pf, 0, sizeof(pf));
@@ -995,7 +937,7 @@ static void utp_send_rst(SendToProc *send_to_proc, void *send_to_userdata,
 
 	LOG_UTPV("%s: Sending RST id:%u seq_nr:%u ack_nr:%u", addrfmt(addr, addrbuf), conn_id_send, seq_nr, ack_nr);
 	LOG_UTPV("send %s len:%u id:%u", addrfmt(addr, addrbuf), (uint)len, conn_id_send);
-	send_to_addr(send_to_proc, send_to_userdata, (const unsigned char*)&pf1, len, addr);
+	send_to_addr(send_to_proc, send_to_userdata, (const unsigned char*)&pf1, len, addr, addrlen);
 }
 
 static void utp_send_packet(UTPSocket *conn, OutgoingPacket *pkt)
@@ -1635,8 +1577,7 @@ static void utp_apply_ledbat_ccontrol(UTPSocket *conn, size_t bytes_acked, uint3
 	assert(our_delay != INT_MAX);
 	assert(our_delay >= 0);
 
-	struct sockaddr_storage sa = packedsockaddr_get_sockaddr_storage(&conn->addr, NULL);
-	UTP_DelaySample((struct sockaddr *)&sa, our_delay / 1000);
+	UTP_DelaySample((const struct sockaddr *)&conn->addr, our_delay / 1000);
 
 	// This test the connection under heavy load from foreground
 	// traffic. Pretend that our delays are very high to force the
@@ -1744,8 +1685,7 @@ static size_t utp_get_packet_size(UTPSocket *conn)
 	size_t mtu = utp_get_udp_mtu(conn);
 
 	if (DYNAMIC_PACKET_SIZE_ENABLED) {
-		struct sockaddr_storage sa = packedsockaddr_get_sockaddr_storage(&conn->addr, NULL);
-		size_t max_packet_size = UTP_GetPacketSizeForAddr((struct sockaddr *)&sa);
+		size_t max_packet_size = UTP_GetPacketSizeForAddr((const struct sockaddr *)&conn->addr);
 		return min(mtu - header_size, max_packet_size);
 	}
 	else
@@ -2344,7 +2284,9 @@ UTPSocket *UTP_Create(SendToProc *send_to_proc, void *send_to_userdata, const st
 	conn->seq_nr = 1;
 	conn->ack_nr = 0;
 	conn->max_window_user = 255 * PACKET_SIZE;
-	packedsockaddr_set(&conn->addr, (const struct sockaddr_storage*)addr, addrlen);
+	assert(addrlen <= sizeof(conn->addr));
+	memcpy(&conn->addr, addr, addrlen);
+	conn->addrlen = addrlen;
 	conn->send_to_proc = send_to_proc;
 	conn->send_to_userdata = send_to_userdata;
 	conn->ack_time = g_current_ms + 0x70000000;
@@ -2522,11 +2464,8 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 					   SendToProc *send_to_proc, void *send_to_userdata,
 					   const unsigned char *buffer, size_t len, const struct sockaddr *to, socklen_t tolen)
 {
-	PackedSockAddr addr;
-	packedsockaddr_set(&addr, (const struct sockaddr_storage*)to, tolen);
-
 	if (len < sizeof(PacketFormat) && len < sizeof(PacketFormatV1)) {
-		LOG_UTPV("recv %s len:%u too small", addrfmt(&addr, addrbuf), (uint)len);
+		LOG_UTPV("recv %s len:%u too small", addrfmt(to, addrbuf), (uint)len);
 		return false;
 	}
 
@@ -2537,16 +2476,16 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 	const uint32_t id = (version == 0) ? ntohl(p->connid) : ntohs(p1->connid);
 
 	if (version == 0 && len < sizeof(PacketFormat)) {
-		LOG_UTPV("recv %s len:%u version:%u too small", addrfmt(&addr, addrbuf), (uint)len, version);
+		LOG_UTPV("recv %s len:%u version:%u too small", addrfmt(to, addrbuf), (uint)len, version);
 		return false;
 	}
 
 	if (version == 1 && len < sizeof(PacketFormatV1)) {
-		LOG_UTPV("recv %s len:%u version:%u too small", addrfmt(&addr, addrbuf), (uint)len, version);
+		LOG_UTPV("recv %s len:%u version:%u too small", addrfmt(to, addrbuf), (uint)len, version);
 		return false;
 	}
 
-	LOG_UTPV("recv %s len:%u id:%u", addrfmt(&addr, addrbuf), (uint)len, id);
+	LOG_UTPV("recv %s len:%u id:%u", addrfmt(to, addrbuf), (uint)len, id);
 
 	const PacketFormat *pf = (PacketFormat*)p;
 	const PacketFormatV1 *pf1 = (PacketFormatV1*)p;
@@ -2563,7 +2502,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 		UTPSocket *conn = g_utp_sockets[i];
 		//LOG_UTPV("Examining UTPSocket %s for %s and (seed:%u s:%u r:%u) for %u",
 		//		addrfmt(conn->addr, addrbuf), addrfmt(addr, addrbuf2), conn->conn_seed, conn->conn_id_send, conn->conn_id_recv, id);
-		if (!packedsockaddr_equal(&conn->addr, &addr))
+		if (!sockaddr_equal((const struct sockaddr *)&conn->addr, to))
 			continue;
 
 		if (flags == ST_RESET && (conn->conn_id_send == id || conn->conn_id_recv == id)) {
@@ -2604,7 +2543,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 		for (size_t i = 0; i < g_rst_info_count; i++) {
 			if (g_rst_info[i].connid != id)
 				continue;
-			if (!packedsockaddr_equal(&g_rst_info[i].addr, &addr))
+			if (!sockaddr_equal((const struct sockaddr *)&g_rst_info[i].addr, to))
 				continue;
 			if (seq_nr != g_rst_info[i].ack_nr)
 				continue;
@@ -2622,17 +2561,19 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 			g_rst_info = realloc(g_rst_info, g_rst_info_alloc * sizeof(g_rst_info[0]));
 		}
 		RST_Info *r = &g_rst_info[g_rst_info_count++];
-		r->addr = addr;
+		assert(tolen <= sizeof(r->addr));
+		memcpy(&r->addr, to, tolen);
+		r->addrlen = tolen;
 		r->connid = id;
 		r->ack_nr = seq_nr;
 		r->timestamp = UTP_GetMilliseconds();
 
-		utp_send_rst(send_to_proc, send_to_userdata, &addr, id, seq_nr, UTP_Random(), version);
+		utp_send_rst(send_to_proc, send_to_userdata, to, tolen, id, seq_nr, UTP_Random(), version);
 		return true;
 	}
 
 	if (incoming_proc) {
-		LOG_UTPV("Incoming connection from %s uTP version:%u", addrfmt(&addr, addrbuf), version);
+		LOG_UTPV("Incoming connection from %s uTP version:%u", addrfmt(to, addrbuf), version);
 
 		// Create a new UTP socket to handle this new connection
 		UTPSocket *conn = UTP_Create(send_to_proc, send_to_userdata, to, tolen);
@@ -2672,9 +2613,6 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 
 bool UTP_HandleICMP(const unsigned char* buffer, size_t len, const struct sockaddr *to, socklen_t tolen)
 {
-	PackedSockAddr addr;
-	packedsockaddr_set(&addr, (const struct sockaddr_storage*)to, tolen);
-
 	// Want the whole packet so we have connection ID
 	if (len < sizeof(PacketFormat)) {
 		return false;
@@ -2688,7 +2626,7 @@ bool UTP_HandleICMP(const unsigned char* buffer, size_t len, const struct sockad
 
 	for (size_t i = 0; i < g_utp_sockets_count; ++i) {
 		UTPSocket *conn = g_utp_sockets[i];
-		if (packedsockaddr_equal(&conn->addr, &addr) &&
+		if (sockaddr_equal((const struct sockaddr *)&conn->addr, to) &&
 			conn->conn_id_recv == id) {
 			// Don't pass on errors for idle/closed connections
 			if (conn->state != CS_IDLE) {
@@ -2816,10 +2754,8 @@ void UTP_GetPeerName(UTPSocket *conn, struct sockaddr *addr, socklen_t *addrlen)
 {
 	assert(conn);
 
-	socklen_t len;
-	const struct sockaddr_storage sa = packedsockaddr_get_sockaddr_storage(&conn->addr, &len);
-	*addrlen = min(len, *addrlen);
-	memcpy(addr, &sa, *addrlen);
+	*addrlen = min(conn->addrlen, *addrlen);
+	memcpy(addr, &conn->addr, *addrlen);
 }
 
 void UTP_GetDelays(UTPSocket *conn, int32_t *ours, int32_t *theirs, uint32_t *age)
