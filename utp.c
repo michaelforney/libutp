@@ -191,7 +191,7 @@ const char *packedsockaddr_fmt(const PackedSockAddr *addr, char *s, size_t len)
 	return s;
 }
 
-struct PACKED_ATTRIBUTE RST_Info {
+struct RST_Info {
 	PackedSockAddr addr;
 	uint32_t connid;
 	uint32_t timestamp;
