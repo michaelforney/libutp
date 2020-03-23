@@ -1,12 +1,14 @@
 #include "utp.h"
 #include "utp_utils.h"
+#include <assert.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
-#include "templates.h"
 
-#include <errno.h>
+#include <algorithm>
+#include <vector>
+
 #ifdef WIN32
 // newer versions of MSVC define these in errno.h
 #ifndef ECONNRESET
@@ -86,7 +88,6 @@ struct test_manager
 	test_manager() :
 		_receiver(NULL), _loss_counter(0), _loss_every(0), _reorder_counter(0), _reorder_every(0)
 	{
-		_send_buffer.Init();
 	}
 	void drop_one_packet_every(int x) { _loss_every = x; }
 	void reorder_one_packet_every(int x) { _reorder_every = x; }
@@ -110,7 +111,6 @@ struct test_manager
 	~test_manager()
 	{
 		clear();
-		_send_buffer.Free();
 	}
 
 	test_manager* _receiver;
@@ -120,12 +120,12 @@ struct test_manager
 	int _reorder_counter;
 	int _reorder_every;
 
-	Array<TestUdpOutgoing*> _send_buffer;
+	std::vector<TestUdpOutgoing*> _send_buffer;
 };
 
-int ComparePacketTimestamp(TestUdpOutgoing* const* lhs, TestUdpOutgoing* const* rhs)
+bool ComparePacketTimestamp(const TestUdpOutgoing* lhs, const TestUdpOutgoing* rhs)
 {
-	return (*lhs)->timestamp - (*rhs)->timestamp;
+	return lhs->timestamp < rhs->timestamp;
 }
 
 void test_incoming_proc(void *userdata, UTPSocket* conn)
@@ -141,9 +141,9 @@ void test_send_to_proc(void *userdata, const unsigned char *p, size_t len, const
 void test_manager::Flush(uint32_t start_time, uint32_t max_time)
 {
 	//printf("In test_manager::Flush");
-	_send_buffer.Sort(&ComparePacketTimestamp);
+	std::sort(_send_buffer.begin(), _send_buffer.end(), ComparePacketTimestamp);
 
-	for (size_t i = 0; i < _send_buffer.GetCount(); ++i) {
+	for (size_t i = 0; i < _send_buffer.size(); ++i) {
 		TestUdpOutgoing *uo = _send_buffer[i];
 //		utassert(uo);
 
@@ -155,7 +155,8 @@ void test_manager::Flush(uint32_t start_time, uint32_t max_time)
 							  (const struct sockaddr*)&uo->addr, uo->addrlen);
 		}
 
-		_send_buffer.MoveUpLast(i);
+		_send_buffer[i] = _send_buffer.back();
+		_send_buffer.pop_back();
 		--i;
 		free(uo);
 	}
@@ -167,10 +168,10 @@ void test_manager::clear()
 	_reorder_every = 0;
 	_loss_counter = 0;
 	_reorder_counter = 0;
-	for(size_t i = 0; i < _send_buffer.GetCount(); i++) {
+	for(size_t i = 0; i < _send_buffer.size(); i++) {
 		free(_send_buffer[i]);
 	}
-	_send_buffer.Clear();
+	_send_buffer.clear();
 }
 
 void test_manager::Send(const unsigned char *p, size_t len, const struct sockaddr *to, socklen_t tolen)
@@ -197,7 +198,7 @@ void test_manager::Send(const unsigned char *p, size_t len, const struct sockadd
 	q->addrlen = tolen;
 	q->len = len;
 	memcpy(q->mem, p, len);
-	_send_buffer.Append(q);
+	_send_buffer.push_back(q);
 }
 
 test_manager* send_udp_manager = 0;
