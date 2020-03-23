@@ -409,7 +409,7 @@ void test_transfer(int flags)
 //			printf("written: %d\n", written);
 		}
 	}
-	utassert_failmsg(incoming->_read_bytes == written, printf("\nread_bytes: %d written: %d\n", incoming->_read_bytes, written));
+	utassert_failmsg(incoming->_read_bytes == written, printf("\nread_bytes: %zu written: %zu\n", incoming->_read_bytes, written));
 
 	sender->close();
 
