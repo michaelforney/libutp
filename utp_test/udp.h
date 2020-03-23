@@ -10,7 +10,7 @@
 #endif
 
 struct UdpOutgoing {
-	SOCKADDR_STORAGE to;
+	struct sockaddr_storage to;
 	uint len;
 	unsigned char mem[1];
 };

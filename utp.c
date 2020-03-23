@@ -22,10 +22,6 @@
 #endif
 #endif
 
-#ifdef POSIX
-typedef struct sockaddr_storage SOCKADDR_STORAGE;
-#endif // POSIX
-
 // number of bytes to increase max window size by, per RTT. This is
 // scaled down linearly proportional to off_target. i.e. if all packets
 // in one window have 0 delay, window size will increase by this number.
@@ -132,7 +128,7 @@ bool packedsockaddr_equal(const PackedSockAddr *lhs, const PackedSockAddr *rhs)
 	return memcmp(lhs->_sin6, rhs->_sin6, sizeof(lhs->_sin6)) == 0;
 }
 
-void packedsockaddr_set(PackedSockAddr *addr, const SOCKADDR_STORAGE* sa, socklen_t len)
+void packedsockaddr_set(PackedSockAddr *addr, const struct sockaddr_storage* sa, socklen_t len)
 {
 	if (sa->ss_family == AF_INET) {
 		assert(len >= sizeof(struct sockaddr_in));
@@ -153,9 +149,9 @@ void packedsockaddr_set(PackedSockAddr *addr, const SOCKADDR_STORAGE* sa, sockle
 	}
 }
 
-SOCKADDR_STORAGE packedsockaddr_get_sockaddr_storage(const PackedSockAddr *addr, socklen_t *len)
+struct sockaddr_storage packedsockaddr_get_sockaddr_storage(const PackedSockAddr *addr, socklen_t *len)
 {
-	SOCKADDR_STORAGE sa;
+	struct sockaddr_storage sa;
 	const unsigned char family = packedsockaddr_get_family(addr);
 	if (family == AF_INET) {
 		struct sockaddr_in *sin = (struct sockaddr_in *)&sa;
@@ -769,14 +765,14 @@ static void utp_sent_ack(UTPSocket *conn)
 static size_t utp_get_udp_mtu(const UTPSocket *conn)
 {
 	socklen_t len;
-	SOCKADDR_STORAGE sa = packedsockaddr_get_sockaddr_storage(&conn->addr, &len);
+	struct sockaddr_storage sa = packedsockaddr_get_sockaddr_storage(&conn->addr, &len);
 	return UTP_GetUDPMTU((const struct sockaddr *)&sa, len);
 }
 
 static size_t utp_get_udp_overhead(const UTPSocket *conn)
 {
 	socklen_t len;
-	SOCKADDR_STORAGE sa = packedsockaddr_get_sockaddr_storage(&conn->addr, &len);
+	struct sockaddr_storage sa = packedsockaddr_get_sockaddr_storage(&conn->addr, &len);
 	return UTP_GetUDPOverhead((const struct sockaddr *)&sa, len);
 }
 
@@ -813,7 +809,7 @@ static void UTP_RegisterSentPacket(size_t length) {
 static void send_to_addr(SendToProc *send_to_proc, void *send_to_userdata, const unsigned char *p, size_t len, const PackedSockAddr *addr)
 {
 	socklen_t tolen;
-	SOCKADDR_STORAGE to = packedsockaddr_get_sockaddr_storage(addr, &tolen);
+	struct sockaddr_storage to = packedsockaddr_get_sockaddr_storage(addr, &tolen);
 	UTP_RegisterSentPacket(len);
 	send_to_proc(send_to_userdata, p, len, (const struct sockaddr *)&to, tolen);
 }
@@ -1642,7 +1638,7 @@ static void utp_apply_ledbat_ccontrol(UTPSocket *conn, size_t bytes_acked, uint3
 	assert(our_delay != INT_MAX);
 	assert(our_delay >= 0);
 
-	SOCKADDR_STORAGE sa = packedsockaddr_get_sockaddr_storage(&conn->addr, NULL);
+	struct sockaddr_storage sa = packedsockaddr_get_sockaddr_storage(&conn->addr, NULL);
 	UTP_DelaySample((struct sockaddr *)&sa, our_delay / 1000);
 
 	// This test the connection under heavy load from foreground
@@ -1751,7 +1747,7 @@ static size_t utp_get_packet_size(UTPSocket *conn)
 	size_t mtu = utp_get_udp_mtu(conn);
 
 	if (DYNAMIC_PACKET_SIZE_ENABLED) {
-		SOCKADDR_STORAGE sa = packedsockaddr_get_sockaddr_storage(&conn->addr, NULL);
+		struct sockaddr_storage sa = packedsockaddr_get_sockaddr_storage(&conn->addr, NULL);
 		size_t max_packet_size = UTP_GetPacketSizeForAddr((struct sockaddr *)&sa);
 		return min(mtu - header_size, max_packet_size);
 	}
@@ -2351,7 +2347,7 @@ UTPSocket *UTP_Create(SendToProc *send_to_proc, void *send_to_userdata, const st
 	conn->seq_nr = 1;
 	conn->ack_nr = 0;
 	conn->max_window_user = 255 * PACKET_SIZE;
-	packedsockaddr_set(&conn->addr, (const SOCKADDR_STORAGE*)addr, addrlen);
+	packedsockaddr_set(&conn->addr, (const struct sockaddr_storage*)addr, addrlen);
 	conn->send_to_proc = send_to_proc;
 	conn->send_to_userdata = send_to_userdata;
 	conn->ack_time = g_current_ms + 0x70000000;
@@ -2530,7 +2526,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 					   const unsigned char *buffer, size_t len, const struct sockaddr *to, socklen_t tolen)
 {
 	PackedSockAddr addr;
-	packedsockaddr_set(&addr, (const SOCKADDR_STORAGE*)to, tolen);
+	packedsockaddr_set(&addr, (const struct sockaddr_storage*)to, tolen);
 
 	if (len < sizeof(PacketFormat) && len < sizeof(PacketFormatV1)) {
 		LOG_UTPV("recv %s len:%u too small", addrfmt(&addr, addrbuf), (uint)len);
@@ -2680,7 +2676,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 bool UTP_HandleICMP(const unsigned char* buffer, size_t len, const struct sockaddr *to, socklen_t tolen)
 {
 	PackedSockAddr addr;
-	packedsockaddr_set(&addr, (const SOCKADDR_STORAGE*)to, tolen);
+	packedsockaddr_set(&addr, (const struct sockaddr_storage*)to, tolen);
 
 	// Want the whole packet so we have connection ID
 	if (len < sizeof(PacketFormat)) {
@@ -2824,7 +2820,7 @@ void UTP_GetPeerName(UTPSocket *conn, struct sockaddr *addr, socklen_t *addrlen)
 	assert(conn);
 
 	socklen_t len;
-	const SOCKADDR_STORAGE sa = packedsockaddr_get_sockaddr_storage(&conn->addr, &len);
+	const struct sockaddr_storage sa = packedsockaddr_get_sockaddr_storage(&conn->addr, &len);
 	*addrlen = min(len, *addrlen);
 	memcpy(addr, &sa, *addrlen);
 }

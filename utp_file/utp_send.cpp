@@ -58,10 +58,6 @@
 
 #endif //WIN32
 
-#ifdef POSIX
-typedef sockaddr_storage SOCKADDR_STORAGE;
-#endif // POSIX
-
 #include "utp.h"
 #include "utp_utils.h"
 
@@ -215,7 +211,7 @@ void UDPSocketManager::select(int microsec)
 
 	if (FD_ISSET(_socket, &r)) {
 		unsigned char buffer[8192];
-		SOCKADDR_STORAGE sa;
+		struct sockaddr_storage sa;
 		socklen_t salen = sizeof(sa);
 
 		for (;;) {

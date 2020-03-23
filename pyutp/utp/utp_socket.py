@@ -60,7 +60,7 @@ def from_lpsockaddr(sa, salen):
 
 def wrap_send_to(f):
     def unwrap_send_to(userdata, ptr, count, to, tolen):
-        sa = ctypes.cast(to, LPSOCKADDR_STORAGE)
+        sa = ctypes.cast(to, psockaddr_storage)
         f(ctypes.string_at(ptr, count), from_lpsockaddr(sa, tolen))
     return unwrap_send_to
 
@@ -112,7 +112,7 @@ class Socket(object):
         utp.UTP_Connect(self.utp_socket)
 
     def getpeername(self):
-        sa = SOCKADDR_STORAGE()
+        sa = sockaddr_storage()
         salen = socklen_t(ctypes.sizeof(sa))
         utp.UTP_GetPeerName(self.utp_socket, ctypes.byref(sa), ctypes.byref(salen))
         return from_lpsockaddr(ctypes.pointer(sa), salen.value)

@@ -16,10 +16,6 @@
 #endif
 #endif
 
-#ifdef POSIX
-typedef sockaddr_storage SOCKADDR_STORAGE;
-#endif // POSIX
-
 #ifdef _WIN32
 #define msleep(x) Sleep(x)
 #else
@@ -77,7 +73,7 @@ utp_socket* incoming = NULL;
 
 struct TestUdpOutgoing {
 	int timestamp;
-	SOCKADDR_STORAGE addr;
+	struct sockaddr_storage addr;
 	socklen_t addrlen;
 	size_t len;
 	unsigned char mem[1];

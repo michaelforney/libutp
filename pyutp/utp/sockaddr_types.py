@@ -54,7 +54,7 @@ if platform.system() == "Darwin":
     # left by making sa_address_t a uint8. This causes the address
     # family to look like it has the wrong byte order if you leave out
     # the length byte!
-    class SOCKADDR_STORAGE(ctypes.Structure):
+    class sockaddr_storage(ctypes.Structure):
         _fields_ = (
             ('ss_len', ctypes.c_ubyte),
             ('ss_family', ADDRESS_FAMILY),
@@ -82,7 +82,7 @@ if platform.system() == "Darwin":
             ("sin6_scope_id", ctypes.c_ulong),
             )
 else:
-    class SOCKADDR_STORAGE(ctypes.Structure):
+    class sockaddr_storage(ctypes.Structure):
         _fields_ = (
             ('ss_family', ADDRESS_FAMILY),
             ('__ss_pad1', ctypes.c_char * _SS_PAD1SIZE),
@@ -107,7 +107,7 @@ else:
             ("sin6_scope_id", ctypes.c_ulong),
             )
 
-LPSOCKADDR_STORAGE = ctypes.POINTER(SOCKADDR_STORAGE)
+psockaddr_storage = ctypes.POINTER(sockaddr_storage)
 
 psockaddr_in = ctypes.POINTER(sockaddr_in)
 
