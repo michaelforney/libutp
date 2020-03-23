@@ -1141,10 +1141,7 @@ static void utp_write_outgoing_packet(UTPSocket *conn, size_t payload, uint flag
 		if (payload && pkt && !pkt->transmissions && pkt->payload < packet_size) {
 			// Use the previous unsent packet
 			added = min(payload + pkt->payload, max(packet_size, pkt->payload)) - pkt->payload;
-			pkt = (OutgoingPacket*)realloc(pkt,
-										   (sizeof(OutgoingPacket) - 1) +
-										   header_size +
-										   pkt->payload + added);
+			pkt = realloc(pkt, (sizeof(OutgoingPacket) - 1) + header_size + pkt->payload + added);
 			circbuf_put(&conn->outbuf, conn->seq_nr - 1, pkt);
 			append = false;
 			assert(!pkt->need_resend);
@@ -2376,7 +2373,7 @@ UTPSocket *UTP_Create(SendToProc *send_to_proc, void *send_to_userdata, const st
 
 	if (g_utp_sockets_count >= g_utp_sockets_alloc) {
 		g_utp_sockets_alloc = max((size_t)16, g_utp_sockets_alloc * 2);
-		g_utp_sockets = (UTPSocket **)realloc(g_utp_sockets, g_utp_sockets_alloc * sizeof(g_utp_sockets[0]));
+		g_utp_sockets = realloc(g_utp_sockets, g_utp_sockets_alloc * sizeof(g_utp_sockets[0]));
 	}
 	conn->idx = g_utp_sockets_count++;
 	g_utp_sockets[conn->idx] = conn;
@@ -2622,7 +2619,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 		LOG_UTPV("recv send RST to non-SYN (%u stored)", (uint)g_rst_info_count);
 		if (g_rst_info_count >= g_rst_info_alloc) {
 			g_rst_info_alloc = max((size_t)16, g_rst_info_alloc * 2);
-			g_rst_info = (RST_Info *)realloc(g_rst_info, g_rst_info_alloc * sizeof(g_rst_info[0]));
+			g_rst_info = realloc(g_rst_info, g_rst_info_alloc * sizeof(g_rst_info[0]));
 		}
 		RST_Info *r = &g_rst_info[g_rst_info_count++];
 		r->addr = addr;
@@ -2793,7 +2790,7 @@ void UTP_CheckTimeouts()
 		}
 	}
 	if (g_rst_info_count != g_rst_info_alloc) {
-		g_rst_info = (RST_Info *)realloc(g_rst_info, g_rst_info_count * sizeof(g_rst_info[0]));
+		g_rst_info = realloc(g_rst_info, g_rst_info_count * sizeof(g_rst_info[0]));
 		g_rst_info_alloc = g_rst_info_count;
 	}
 
