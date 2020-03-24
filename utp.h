@@ -53,11 +53,11 @@ enum {
 // Callbacks called by a uTP socket (register with UTP_SetCallbacks)
 
 // The uTP socket layer calls this when bytes have been received from the network.
-typedef void UTPOnReadProc(void *userdata, const unsigned char *bytes, size_t count);
+typedef void UTPOnReadProc(void *userdata, const uint8_t *bytes, size_t count);
 
 // The uTP socket layer calls this to fill the outgoing buffer with bytes.
 // The uTP layer takes responsibility that those bytes will be delivered.
-typedef void UTPOnWriteProc(void *userdata, unsigned char *bytes, size_t count);
+typedef void UTPOnWriteProc(void *userdata, uint8_t *bytes, size_t count);
 
 // The uTP socket layer calls this to retrieve number of bytes currently in read buffer
 typedef size_t UTPGetRBSize(void *userdata);
@@ -88,7 +88,7 @@ struct UTPFunctionTable {
 typedef void UTPGotIncomingConnection(void *userdata, struct UTPSocket* s);
 
 // The uTP socket layer calls this to send UDP packets
-typedef void SendToProc(void *userdata, const unsigned char *p, size_t len, const struct sockaddr *to, socklen_t tolen);
+typedef void SendToProc(void *userdata, const uint8_t *p, size_t len, const struct sockaddr *to, socklen_t tolen);
 
 
 // Functions which can be called with a uTP socket
@@ -111,10 +111,10 @@ void UTP_Connect(struct UTPSocket *socket);
 // in some way, false if the packet did not appear to be uTP.
 bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 					   SendToProc *send_to_proc, void *send_to_userdata,
-					   const unsigned char *buffer, size_t len, const struct sockaddr *to, socklen_t tolen);
+					   const uint8_t *buffer, size_t len, const struct sockaddr *to, socklen_t tolen);
 
 // Process an ICMP received UDP packet.
-bool UTP_HandleICMP(const unsigned char* buffer, size_t len, const struct sockaddr *to, socklen_t tolen);
+bool UTP_HandleICMP(const uint8_t *buffer, size_t len, const struct sockaddr *to, socklen_t tolen);
 
 // Write bytes to the uTP socket.
 // Returns true if the socket is still writable.
