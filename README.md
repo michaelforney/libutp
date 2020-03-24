@@ -1,4 +1,5 @@
 # libutp - The uTorrent Transport Protocol library.
+
 Copyright (c) 2010 BitTorrent, Inc.
 
 uTP is a TCP-like implementation of [LEDBAT][ledbat] documented as a BitTorrent
@@ -7,7 +8,7 @@ while maintaining minimum extra delay. It is implemented on top of UDP to be
 cross-platform and functional today. As a result, uTP is the primary transport
 for uTorrent peer-to-peer connections.
 
-uTP is written in C++, but the external interface is strictly C (ANSI C89).
+uTP is written in C99.
 
 ## The Interface
 
