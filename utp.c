@@ -87,12 +87,6 @@ char addrbuf[65];
 char addrbuf2[65];
 #define addrfmt(x, s) sockaddr_fmt(x, s, sizeof(s))
 
-#if (defined(__SVR4) && defined(__sun))
-#pragma pack(1)
-#else
-#pragma pack(push,1)
-#endif
-
 const char *sockaddr_fmt(const struct sockaddr *sa, char *s, size_t len)
 {
 	memset(s, 0, len);
@@ -157,94 +151,53 @@ typedef struct RST_Info RST_Info;
 #define PACKET_SIZE_BIG 1400
 #define PACKET_SIZE_HUGE_BUCKET 4
 
-struct PACKED_ATTRIBUTE PacketFormat {
+enum {
 	// connection ID
-	uint32_big connid;
-	uint32_big tv_sec;
-	uint32_big tv_usec;
-	uint32_big reply_micro;
+	PF0_CONNID     = 0,
+	PF0_TV_SEC     = 4,
+	PF0_TV_USEC    = 8,
+	PF0_DELAY_USEC = 12,
 	// receive window size in PACKET_SIZE chunks
-	uint8_t windowsize;
+	PF0_WND_SIZE   = 16,
 	// Type of the first extension header
-	uint8_t ext;
+	PF0_EXT        = 17,
 	// Flags
-	uint8_t flags;
+	PF0_FLAGS      = 18,
 	// Sequence number
-	uint16_big seq_nr;
+	PF0_SEQ_NR     = 19,
 	// Acknowledgment number
-	uint16_big ack_nr;
-};
-typedef struct PacketFormat PacketFormat;
+	PF0_ACK_NR     = 21,
+	PF0_SIZE       = 23,
 
-struct PACKED_ATTRIBUTE PacketFormatAck {
-	PacketFormat pf;
-	uint8_t ext_next;
-	uint8_t ext_len;
-	uint8_t acks[4];
+	PF0_EXT_NEXT   = 23,
+	PF0_EXT_LEN    = 24,
+	PF0_EXT_DATA   = 25,
+	PF0_SIZE_EXT   = 33,
 };
-typedef struct PacketFormatAck PacketFormatAck;
 
-struct PACKED_ATTRIBUTE PacketFormatExtensions {
-	PacketFormat pf;
-	uint8_t ext_next;
-	uint8_t ext_len;
-	uint8_t extensions[8];
-};
-typedef struct PacketFormatExtensions PacketFormatExtensions;
-
-struct PACKED_ATTRIBUTE PacketFormatV1 {
+enum {
 	// packet_type (4 high bits)
 	// protocol version (4 low bits)
-	uint8_t ver_type;
-
+	PF1_TYPE       = 0,
 	// Type of the first extension header
-	uint8_t ext;
+	PF1_EXT        = 1,
 	// connection ID
-	uint16_big connid;
-	uint32_big tv_usec;
-	uint32_big reply_micro;
+	PF1_CONNID     = 2,
+	PF1_TV_USEC    = 4,
+	PF1_DELAY_USEC = 8,
 	// receive window size in bytes
-	uint32_big windowsize;
+	PF1_WND_SIZE   = 12,
 	// Sequence number
-	uint16_big seq_nr;
+	PF1_SEQ_NR     = 16,
 	// Acknowledgment number
-	uint16_big ack_nr;
+	PF1_ACK_NR     = 18,
+	PF1_SIZE       = 20,
+
+	PF1_EXT_NEXT   = 20,
+	PF1_EXT_LEN    = 21,
+	PF1_EXT_DATA   = 22,
+	PF1_SIZE_EXT   = 30,
 };
-typedef struct PacketFormatV1 PacketFormatV1;
-
-uint8_t packetformatv1_version(const PacketFormatV1 *pf1) { return pf1->ver_type & 0xf; }
-uint8_t packetformatv1_type(const PacketFormatV1 *pf1) { return pf1->ver_type >> 4; }
-
-void packetformatv1_set_version(PacketFormatV1 *pf1, uint8_t v)
-{
-	pf1->ver_type = (pf1->ver_type & 0xf0) | (v & 0xf);
-}
-
-void packetformatv1_set_type(PacketFormatV1 *pf1, uint8_t t) {
-	pf1->ver_type = (pf1->ver_type & 0xf) | (t << 4);
-}
-
-struct PACKED_ATTRIBUTE PacketFormatAckV1 {
-	PacketFormatV1 pf;
-	uint8_t ext_next;
-	uint8_t ext_len;
-	uint8_t acks[4];
-};
-typedef struct PacketFormatAckV1 PacketFormatAckV1;
-
-struct PACKED_ATTRIBUTE PacketFormatExtensionsV1 {
-	PacketFormatV1 pf;
-	uint8_t ext_next;
-	uint8_t ext_len;
-	uint8_t extensions[8];
-};
-typedef struct PacketFormatExtensionsV1 PacketFormatExtensionsV1;
-
-#if (defined(__SVR4) && defined(__sun))
-#pragma pack(0)
-#else
-#pragma pack(pop)
-#endif
 
 enum {
 	ST_DATA = 0,		// Data packet.
@@ -254,6 +207,32 @@ enum {
 	ST_SYN = 4,			// Connect SYN
 	ST_NUM_STATES,		// used for bounds checking
 };
+
+static inline void set16(void *dst, uint16_t val)
+{
+	val = htons(val);
+	memcpy(dst, &val, 2);
+}
+
+static inline void set32(void *dst, uint32_t val)
+{
+	val = htonl(val);
+	memcpy(dst, &val, 4);
+}
+
+static inline uint16_t get16(const void *src)
+{
+	uint16_t val;
+	memcpy(&val, src, 2);
+	return ntohs(val);
+}
+
+static inline uint32_t get32(const void *src)
+{
+	uint32_t val;
+	memcpy(&val, src, 4);
+	return ntohl(val);
+}
 
 static const char *const flagnames[] = {
 	"ST_DATA","ST_FIN","ST_STATE","ST_RESET","ST_SYN"
@@ -695,12 +674,12 @@ static void utp_maybe_decay_win(UTPSocket *conn)
 
 static size_t utp_get_header_size(const UTPSocket *conn)
 {
-	return (conn->version ? sizeof(PacketFormatV1) : sizeof(PacketFormat));
+	return conn->version ? PF1_SIZE : PF0_SIZE;
 }
 
 static size_t utp_get_header_extensions_size(const UTPSocket *conn)
 {
-	return (conn->version ? sizeof(PacketFormatExtensionsV1) : sizeof(PacketFormatExtensions));
+	return conn->version ? PF1_SIZE_EXT : PF0_SIZE_EXT;
 }
 
 static void utp_sent_ack(UTPSocket *conn)
@@ -755,21 +734,20 @@ static void send_to_addr(SendToProc *send_to_proc, void *send_to_userdata, const
 	send_to_proc(send_to_userdata, p, len, addr, addrlen);
 }
 
-static void utp_send_data(UTPSocket *conn, PacketFormat* b, size_t length, enum bandwidth_type_t type)
+static void utp_send_data(UTPSocket *conn, uint8_t *pkt, size_t length, enum bandwidth_type_t type)
 {
 	// time stamp this packet with local time, the stamp goes into
 	// the header of every packet at the 8th byte for 8 bytes :
 	// two integers, check packet.h for more
 	uint64_t time = UTP_GetMicroseconds();
 
-	PacketFormatV1* b1 = (PacketFormatV1*)b;
 	if (conn->version == 0) {
-		b->tv_sec = htonl(time / 1000000);
-		b->tv_usec = htonl(time % 1000000);
-		b->reply_micro = htonl(conn->reply_micro);
+		set32(pkt + PF0_TV_SEC, time / 1000000);
+		set32(pkt + PF0_TV_USEC, time % 1000000);
+		set32(pkt + PF0_DELAY_USEC, conn->reply_micro);
 	} else {
-		b1->tv_usec = htonl(time);
-		b1->reply_micro = htonl(conn->reply_micro);
+		set32(pkt + PF1_TV_USEC, time);
+		set32(pkt + PF1_DELAY_USEC, conn->reply_micro);
 	}
 
 	conn->last_sent_packet = g_current_ms;
@@ -791,43 +769,38 @@ static void utp_send_data(UTPSocket *conn, PacketFormat* b, size_t length, enum 
 		conn->func.on_overhead(conn->userdata, true, n, type);
 	}
 #if g_log_utp_verbose
-	int flags = conn->version == 0 ? b->flags : packetformatv1_type(b1);
-	uint16_t seq_nr = conn->version == 0 ? b->seq_nr : b1->seq_nr;
-	uint16_t ack_nr = conn->version == 0 ? b->ack_nr : b1->ack_nr;
+	uint8_t flags = conn->version == 0 ? pkt[PF0_FLAGS] : pkt[PF1_TYPE] >> 4;
+	uint16_t seq_nr = conn->version == 0 ? get16(pkt + PF0_SEQ_NR) : get16(pkt + PF1_SEQ_NR);
+	uint16_t ack_nr = conn->version == 0 ? get16(pkt + PF0_ACK_NR) : get16(pkt + PF1_ACK_NR);
 	LOG_UTPV("0x%08x: send %s len:%u id:%u timestamp:" I64u " reply_micro:%u flags:%s seq_nr:%u ack_nr:%u",
 	         conn, addrfmt((const struct sockaddr *)&conn->addr, addrbuf), (uint)length, conn->conn_id_send,
 	         time, conn->reply_micro, flagnames[flags], seq_nr, ack_nr);
 #endif
-	send_to_addr(conn->send_to_proc, conn->send_to_userdata, (const uint8_t*)b, length, (const struct sockaddr *)&conn->addr, conn->addrlen);
+	send_to_addr(conn->send_to_proc, conn->send_to_userdata, pkt, length, (const struct sockaddr *)&conn->addr, conn->addrlen);
 }
 
 static void utp_send_ack(UTPSocket *conn, bool synack)
 {
-	PacketFormatExtensions pfe;
-	memset(&pfe, 0, sizeof(pfe));
-	PacketFormatExtensionsV1 *pfe1 = (PacketFormatExtensionsV1 *)&pfe;
-	PacketFormatAck *pfa = (PacketFormatAck *)pfe1;
-	PacketFormatAckV1 *pfa1 = (PacketFormatAckV1 *)pfe1;
+	uint8_t pkt[PF0_SIZE_EXT] = {0};
 
 	size_t len;
 	conn->last_rcv_win = utp_get_rcv_window(conn);
 	if (conn->version == 0) {
-		pfa->pf.connid = htonl(conn->conn_id_send);
-		pfa->pf.ack_nr = htons(conn->ack_nr);
-		pfa->pf.seq_nr = htons(conn->seq_nr);
-		pfa->pf.flags = ST_STATE;
-		pfa->pf.ext = 0;
-		pfa->pf.windowsize = (uint8_t)DIV_ROUND_UP(conn->last_rcv_win, PACKET_SIZE);
-		len = sizeof(PacketFormat);
+		set32(pkt + PF0_CONNID, conn->conn_id_send);
+		set16(pkt + PF0_ACK_NR, conn->ack_nr);
+		set16(pkt + PF0_SEQ_NR, conn->seq_nr);
+		pkt[PF0_FLAGS] = ST_STATE;
+		pkt[PF0_EXT] = 0;
+		pkt[PF0_WND_SIZE] = DIV_ROUND_UP(conn->last_rcv_win, PACKET_SIZE);
+		len = PF0_SIZE;
 	} else {
-		packetformatv1_set_version(&pfa1->pf, 1);
-		packetformatv1_set_type(&pfa1->pf, ST_STATE);
-		pfa1->pf.ext = 0;
-		pfa1->pf.connid = htons(conn->conn_id_send);
-		pfa1->pf.ack_nr = htons(conn->ack_nr);
-		pfa1->pf.seq_nr = htons(conn->seq_nr);
-		pfa1->pf.windowsize = htonl(conn->last_rcv_win);
-		len = sizeof(PacketFormatV1);
+		pkt[PF1_TYPE] = ST_STATE << 4 | 1;
+		pkt[PF1_EXT] = 0;
+		set16(pkt + PF1_CONNID, conn->conn_id_send);
+		set16(pkt + PF1_ACK_NR, conn->ack_nr);
+		set16(pkt + PF1_SEQ_NR, conn->seq_nr);
+		set32(pkt + PF1_WND_SIZE, conn->last_rcv_win);
+		len = PF1_SIZE;
 	}
 
 	// we never need to send EACK for connections
@@ -838,16 +811,19 @@ static void utp_send_ack(UTPSocket *conn, bool synack)
 		// for synacks, so this should not be
 		// as synack
 		assert(!synack);
+		uint8_t *acks;
 		if (conn->version == 0) {
-			pfa->pf.ext = 1;
-			pfa->ext_next = 0;
-			pfa->ext_len = 4;
+			pkt[PF0_EXT] = 1;
+			pkt[PF0_EXT_NEXT] = 0;
+			pkt[PF0_EXT_LEN] = 4;
+			acks = pkt + PF0_EXT_DATA;
 		} else {
-			pfa1->pf.ext = 1;
-			pfa1->ext_next = 0;
-			pfa1->ext_len = 4;
+			pkt[PF1_EXT] = 1;
+			pkt[PF1_EXT_NEXT] = 0;
+			pkt[PF1_EXT_LEN] = 4;
+			acks = pkt + PF1_EXT_DATA;
 		}
-		uint m = 0;
+		uint32_t m = 0;
 
 		// reorder count should only be non-zero
 		// if the packet ack_nr + 1 has not yet
@@ -861,17 +837,10 @@ static void utp_send_ack(UTPSocket *conn, bool synack)
 				LOG_UTPV("0x%08x: EACK packet [%u]", conn, conn->ack_nr + i + 2);
 			}
 		}
-		if (conn->version == 0) {
-			pfa->acks[0] = (uint8_t)m;
-			pfa->acks[1] = (uint8_t)(m >> 8);
-			pfa->acks[2] = (uint8_t)(m >> 16);
-			pfa->acks[3] = (uint8_t)(m >> 24);
-		} else {
-			pfa1->acks[0] = (uint8_t)m;
-			pfa1->acks[1] = (uint8_t)(m >> 8);
-			pfa1->acks[2] = (uint8_t)(m >> 16);
-			pfa1->acks[3] = (uint8_t)(m >> 24);
-		}
+		acks[0] = (uint8_t)m;
+		acks[1] = (uint8_t)(m >> 8);
+		acks[2] = (uint8_t)(m >> 16);
+		acks[3] = (uint8_t)(m >> 24);
 		len += 4 + 2;
 		LOG_UTPV("0x%08x: Sending EACK %u [%u] bits:[%032b]", conn, conn->ack_nr, conn->conn_id_send, m);
 	} else if (synack) {
@@ -880,15 +849,15 @@ static void utp_send_ack(UTPSocket *conn, bool synack)
 
 		LOG_UTPV("0x%08x: Sending ACK %u [%u] with extension bits", conn, conn->ack_nr, conn->conn_id_send);
 		if (conn->version == 0) {
-			pfe.pf.ext = 2;
-			pfe.ext_next = 0;
-			pfe.ext_len = 8;
-			memset(pfe.extensions, 0, 8);
+			pkt[PF0_EXT] = 2;
+			pkt[PF0_EXT_NEXT] = 0;
+			pkt[PF0_EXT_LEN] = 8;
+			memset(pkt + PF0_EXT_DATA, 0, 8);
 		} else {
-			pfe1->pf.ext = 2;
-			pfe1->ext_next = 0;
-			pfe1->ext_len = 8;
-			memset(pfe1->extensions, 0, 8);
+			pkt[PF1_EXT] = 2;
+			pkt[PF1_EXT_NEXT] = 0;
+			pkt[PF1_EXT_LEN] = 8;
+			memset(pkt + PF1_EXT_DATA, 0, 8);
 		}
 		len += 8 + 2;
 	} else {
@@ -896,7 +865,7 @@ static void utp_send_ack(UTPSocket *conn, bool synack)
 	}
 
 	utp_sent_ack(conn);
-	utp_send_data(conn, (PacketFormat*)&pfe, len, ack_overhead);
+	utp_send_data(conn, pkt, len, ack_overhead);
 }
 
 static void utp_send_keep_alive(UTPSocket *conn)
@@ -911,33 +880,30 @@ static void utp_send_rst(SendToProc *send_to_proc, void *send_to_userdata,
                          const struct sockaddr *addr, socklen_t addrlen,
                          uint32_t conn_id_send, uint16_t ack_nr, uint16_t seq_nr, uint8_t version)
 {
-	PacketFormat pf;
-	memset(&pf, 0, sizeof(pf));
-	PacketFormatV1 *pf1 = (PacketFormatV1 *)&pf;
+	uint8_t pkt[PF0_SIZE] = {0};
 
 	size_t len;
 	if (version == 0) {
-		pf.connid = htonl(conn_id_send);
-		pf.ack_nr = htons(ack_nr);
-		pf.seq_nr = htons(seq_nr);
-		pf.flags = ST_RESET;
-		pf.ext = 0;
-		pf.windowsize = 0;
-		len = sizeof(PacketFormat);
+		set32(pkt + PF0_CONNID, conn_id_send);
+		set16(pkt + PF0_ACK_NR, ack_nr);
+		set16(pkt + PF0_SEQ_NR, seq_nr);
+		pkt[PF0_FLAGS] = ST_RESET;
+		pkt[PF0_EXT] = 0;
+		pkt[PF0_WND_SIZE] = 0;
+		len = PF0_SIZE;
 	} else {
-		packetformatv1_set_version(pf1, 1);
-		packetformatv1_set_type(pf1, ST_RESET);
-		pf1->ext = 0;
-		pf1->connid = htons(conn_id_send);
-		pf1->ack_nr = htons(ack_nr);
-		pf1->seq_nr = htons(seq_nr);
-		pf1->windowsize = htonl(0);
-		len = sizeof(PacketFormatV1);
+		pkt[PF1_TYPE] = ST_RESET << 4 | 1;
+		pkt[PF1_EXT] = 0;
+		set16(pkt + PF1_CONNID, conn_id_send);
+		set16(pkt + PF1_ACK_NR, ack_nr);
+		set16(pkt + PF1_SEQ_NR, seq_nr);
+		set32(pkt + PF1_WND_SIZE, 0);
+		len = PF1_SIZE;
 	}
 
 	LOG_UTPV("%s: Sending RST id:%u seq_nr:%u ack_nr:%u", addrfmt(addr, addrbuf), conn_id_send, seq_nr, ack_nr);
 	LOG_UTPV("send %s len:%u id:%u", addrfmt(addr, addrbuf), (uint)len, conn_id_send);
-	send_to_addr(send_to_proc, send_to_userdata, (const uint8_t*)&pf1, len, addr, addrlen);
+	send_to_addr(send_to_proc, send_to_userdata, pkt, len, addr, addrlen);
 }
 
 static void utp_send_packet(UTPSocket *conn, OutgoingPacket *pkt)
@@ -961,17 +927,15 @@ static void utp_send_packet(UTPSocket *conn, OutgoingPacket *pkt)
 
 	pkt->need_resend = false;
 
-	PacketFormatV1* p1 = (PacketFormatV1*)pkt->data;
-	PacketFormat* p = (PacketFormat*)pkt->data;
 	if (conn->version == 0) {
-		p->ack_nr = htons(conn->ack_nr);
+		set16(pkt->data + PF0_ACK_NR, conn->ack_nr);
 	} else {
-		p1->ack_nr = htons(conn->ack_nr);
+		set16(pkt->data + PF1_ACK_NR, conn->ack_nr);
 	}
 	pkt->time_sent = UTP_GetMicroseconds();
 	pkt->transmissions++;
 	utp_sent_ack(conn);
-	utp_send_data(conn, (PacketFormat*)pkt->data, pkt->length,
+	utp_send_data(conn, pkt->data, pkt->length,
 		(conn->state == CS_SYN_SENT) ? connect_overhead
 		: (pkt->transmissions == 1) ? payload_bandwidth
 		: retransmit_overhead);
@@ -1107,29 +1071,27 @@ static void utp_write_outgoing_packet(UTPSocket *conn, size_t payload, uint flag
 
 		conn->last_rcv_win = utp_get_rcv_window(conn);
 
-		PacketFormat* p = (PacketFormat*)pkt->data;
-		PacketFormatV1* p1 = (PacketFormatV1*)pkt->data;
+		uint8_t* p = pkt->data;
 		if (conn->version == 0) {
-			p->connid = htonl(conn->conn_id_send);
-			p->ext = 0;
-			p->windowsize = (uint8_t)DIV_ROUND_UP(conn->last_rcv_win, PACKET_SIZE);
-			p->ack_nr = htons(conn->ack_nr);
-			p->flags = flags;
+			set32(p + PF0_CONNID, conn->conn_id_send);
+			p[PF0_EXT] = 0;
+			p[PF0_WND_SIZE] = DIV_ROUND_UP(conn->last_rcv_win, PACKET_SIZE);
+			set16(p + PF0_ACK_NR, conn->ack_nr);
+			p[PF0_FLAGS] = flags;
 		} else {
-			packetformatv1_set_version(p1, 1);
-			packetformatv1_set_type(p1, flags);
-			p1->ext = 0;
-			p1->connid = htons(conn->conn_id_send);
-			p1->windowsize = htonl(conn->last_rcv_win);
-			p1->ack_nr = htons(conn->ack_nr);
+			p[PF1_TYPE] = flags << 4 | 1;
+			p[PF1_EXT] = 0;
+			set16(p + PF1_CONNID, conn->conn_id_send);
+			set32(p + PF1_WND_SIZE, conn->last_rcv_win);
+			set16(p + PF1_ACK_NR, conn->ack_nr);
 		}
 
 		if (append) {
 			// Remember the message in the outgoing queue.
 			circbuf_ensure_size(&conn->outbuf, conn->seq_nr, conn->cur_window_packets);
 			circbuf_put(&conn->outbuf, conn->seq_nr, pkt);
-			if (conn->version == 0) p->seq_nr = htons(conn->seq_nr);
-			else p1->seq_nr = htons(conn->seq_nr);
+			if (conn->version == 0) set16(p + PF0_SEQ_NR, conn->seq_nr);
+			else set16(p + PF1_SEQ_NR, conn->seq_nr);
 			conn->seq_nr++;
 			conn->cur_window_packets++;
 		}
@@ -1678,9 +1640,7 @@ static void UTP_RegisterRecvPacket(UTPSocket *conn, size_t len)
 // connection is allowed to send
 static size_t utp_get_packet_size(UTPSocket *conn)
 {
-	int header_size = conn->version == 1
-		? sizeof(PacketFormatV1)
-		: sizeof(PacketFormat);
+	int header_size = conn->version == 1 ? PF1_SIZE : PF0_SIZE;
 
 	size_t mtu = utp_get_udp_mtu(conn);
 
@@ -1697,7 +1657,7 @@ static size_t utp_get_packet_size(UTPSocket *conn)
 // Process an incoming packet
 // syn is true if this is the first packet received. It will cut off parsing
 // as soon as the header is done
-size_t UTP_ProcessIncoming(UTPSocket *conn, const uint8_t *packet, size_t len, bool syn)
+size_t UTP_ProcessIncoming(UTPSocket *conn, const uint8_t *pkt, size_t len, bool syn)
 {
 	UTP_RegisterRecvPacket(conn, len);
 
@@ -1705,29 +1665,38 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const uint8_t *packet, size_t len, b
 
 	utp_update_send_quota(conn);
 
-	const PacketFormat *pf = (PacketFormat*)packet;
-	const PacketFormatV1 *pf1 = (PacketFormatV1*)packet;
-	const uint8_t *packet_end = packet + len;
+	const uint8_t *packet_end = pkt + len;
 
 	uint16_t pk_seq_nr;
 	uint16_t pk_ack_nr;
 	uint8_t pk_flags;
+	uint64_t pk_time;
+	uint32_t pk_delay;
+	uint32_t pk_wnd_size;
+	uint8_t pk_ext;
 	if (conn->version == 0) {
-		pk_seq_nr = ntohs(pf->seq_nr);
-		pk_ack_nr = ntohs(pf->ack_nr);
-		pk_flags = pf->flags;
+		pk_seq_nr = get16(pkt + PF0_SEQ_NR);
+		pk_ack_nr = get16(pkt + PF0_ACK_NR);
+		pk_flags = pkt[PF0_FLAGS];
+		pk_time = (uint64_t)get32(pkt + PF0_TV_SEC) * 1000000 + get32(pkt + PF0_TV_USEC);
+		pk_delay = get32(pkt + PF0_DELAY_USEC);
+		pk_wnd_size = (uint32_t)pkt[PF0_WND_SIZE] * PACKET_SIZE;
+		pk_ext = pkt[PF0_EXT];
 	} else {
-		pk_seq_nr = ntohs(pf1->seq_nr);
-		pk_ack_nr = ntohs(pf1->ack_nr);
-		pk_flags = packetformatv1_type(pf1);
+		pk_seq_nr = get16(pkt + PF1_SEQ_NR);
+		pk_ack_nr = get16(pkt + PF1_ACK_NR);
+		pk_flags = pkt[PF1_TYPE] >> 4;
+		pk_time = get32(pkt + PF1_TV_USEC);
+		pk_delay = get32(pkt + PF1_DELAY_USEC);
+		pk_wnd_size = get32(pkt + PF1_WND_SIZE);
+		pk_ext = pkt[PF1_EXT];
 	}
 
 	if (pk_flags >= ST_NUM_STATES) return 0;
 
 	LOG_UTPV("0x%08x: Got %s. seq_nr:%u ack_nr:%u state:%s version:%u timestamp:" I64u " reply_micro:%u",
 			 conn, flagnames[pk_flags], pk_seq_nr, pk_ack_nr, statenames[conn->state], conn->version,
-			 conn->version == 0?(uint64_t)ntohl(pf->tv_sec) * 1000000 + ntohl(pf->tv_usec):(uint64_t)ntohl(pf1->tv_usec),
-			 conn->version == 0?ntohl(pf->reply_micro):ntohl(pf1->reply_micro));
+			 pk_time, pk_delay);
 
 	// mark receipt time
 	uint64_t time = UTP_GetMicroseconds();
@@ -1741,14 +1710,13 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const uint8_t *packet, size_t len, b
 
 	// Unpack UTP packet options
 	// Data pointer
-	const uint8_t *data = (const uint8_t*)pf + utp_get_header_size(conn);
+	const uint8_t *data = pkt + utp_get_header_size(conn);
 	if (utp_get_header_size(conn) > len) {
 		LOG_UTPV("0x%08x: Invalid packet size (less than header size)", conn);
 		return 0;
 	}
 	// Skip the extension headers
-	uint extension = conn->version == 0 ? pf->ext : pf1->ext;
-	if (extension != 0) {
+	if (pk_ext != 0) {
 		do {
 			// Verify that the packet is valid.
 			data += 2;
@@ -1758,7 +1726,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const uint8_t *packet, size_t len, b
 				return 0;
 			}
 
-			switch(extension) {
+			switch(pk_ext) {
 			case 1: // Selective Acknowledgment
 				selack_ptr = data;
 				break;
@@ -1772,9 +1740,9 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const uint8_t *packet, size_t len, b
 					conn->extensions[0], conn->extensions[1], conn->extensions[2], conn->extensions[3],
 					conn->extensions[4], conn->extensions[5], conn->extensions[6], conn->extensions[7]);
 			}
-			extension = data[-2];
+			pk_ext = data[-2];
 			data += data[-1];
-		} while (extension);
+		} while (pk_ext);
 	}
 
 	if (conn->state == CS_SYN_SENT) {
@@ -1858,19 +1826,11 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const uint8_t *packet, size_t len, b
 			 conn, acks, (uint)acked_bytes, conn->seq_nr, (uint)conn->cur_window, conn->cur_window_packets,
 			 seqnr, (uint)conn->max_window, (uint)(min_rtt / 1000), conn->rtt);
 
-	uint64_t p;
-
-	if (conn->version == 0) {
-		p = (uint64_t)ntohl(pf->tv_sec) * 1000000 + ntohl(pf->tv_usec);
-	} else {
-		p = ntohl(pf1->tv_usec);
-	}
-
 	conn->last_measured_delay = g_current_ms;
 
 	// get delay in both directions
 	// record the delay to report back
-	const uint32_t their_delay = (uint32_t)(p == 0 ? 0 : time - p);
+	const uint32_t their_delay = pk_time == 0 ? 0 : time - pk_time;
 	conn->reply_micro = their_delay;
 	uint32_t prev_delay_base = conn->their_hist.delay_base;
 	if (their_delay != 0) delayhist_add_sample(&conn->their_hist, their_delay);
@@ -1886,9 +1846,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const uint8_t *packet, size_t len, b
 		}
 	}
 
-	const uint32_t actual_delay = conn->version==0
-		?(ntohl(pf->reply_micro)==INT_MAX?0:ntohl(pf->reply_micro))
-		:(ntohl(pf1->reply_micro)==INT_MAX?0:ntohl(pf1->reply_micro));
+	const uint32_t actual_delay = pk_delay == INT_MAX ? 0 : pk_delay;
 
 	// if the actual delay is 0, it means the other end
 	// hasn't received a sample from us yet, and doesn't
@@ -1931,8 +1889,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const uint8_t *packet, size_t len, b
 	// sanity check, the other end should never ack packets
 	// past the point we've sent
 	if (acks <= conn->cur_window_packets) {
-		conn->max_window_user = conn->version == 0
-			? pf->windowsize * PACKET_SIZE : ntohl(pf1->windowsize);
+		conn->max_window_user = pk_wnd_size;
 
 		// If max user window is set to 0, then we startup a timer
 		// That will reset it to 1 after 15 seconds.
@@ -2221,9 +2178,11 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const uint8_t *packet, size_t len, b
 	return (size_t)(packet_end - data);
 }
 
-static inline bool UTP_IsV1(PacketFormatV1 const* pf)
+static inline uint8_t UTP_GetVersion(const uint8_t *pkt)
 {
-	return packetformatv1_version(pf) == 1 && packetformatv1_type(pf) < ST_NUM_STATES && pf->ext < 3;
+	if ((pkt[PF1_TYPE] & 0xf) == 1 && (pkt[PF1_TYPE] >> 4) < ST_NUM_STATES && pkt[PF1_EXT] < 3)
+		return 1;
+	return 0;
 }
 
 void UTP_Free(UTPSocket *conn)
@@ -2379,7 +2338,6 @@ void UTP_Connect(UTPSocket *conn)
 	assert(conn->state == CS_IDLE);
 	assert(conn->cur_window_packets == 0);
 	assert(circbuf_get(&conn->outbuf, conn->seq_nr) == NULL);
-	assert(sizeof(PacketFormatV1) == 20);
 
 	conn->state = CS_SYN_SENT;
 
@@ -2418,31 +2376,28 @@ void UTP_Connect(UTPSocket *conn)
 
 	OutgoingPacket *pkt = (OutgoingPacket*)malloc(sizeof(OutgoingPacket) - 1 + header_ext_size);
 
-	PacketFormatExtensions* p = (PacketFormatExtensions*)pkt->data;
-	PacketFormatExtensionsV1* p1 = (PacketFormatExtensionsV1*)pkt->data;
-
+	uint8_t *p = pkt->data;
 	memset(p, 0, header_ext_size);
 	// SYN packets are special, and have the receive ID in the connid field,
 	// instead of conn_id_send.
 	if (conn->version == 0) {
-		p->pf.connid = htonl(conn->conn_id_recv);
-		p->pf.ext = 2;
-		p->pf.windowsize = (uint8_t)DIV_ROUND_UP(conn->last_rcv_win, PACKET_SIZE);
-		p->pf.seq_nr = htons(conn->seq_nr);
-		p->pf.flags = ST_SYN;
-		p->ext_next = 0;
-		p->ext_len = 8;
-		memset(p->extensions, 0, 8);
+		set32(p + PF0_CONNID, conn->conn_id_recv);
+		p[PF0_EXT] = 2;
+		p[PF0_WND_SIZE] = DIV_ROUND_UP(conn->last_rcv_win, PACKET_SIZE);
+		set16(p + PF0_SEQ_NR, conn->seq_nr);
+		p[PF0_FLAGS] = ST_SYN;
+		p[PF0_EXT_NEXT] = 0;
+		p[PF0_EXT_LEN] = 8;
+		memset(p + PF0_EXT_DATA, 0, 8);
 	} else {
-		packetformatv1_set_version(&p1->pf, 1);
-		packetformatv1_set_type(&p1->pf, ST_SYN);
-		p1->pf.ext = 2;
-		p1->pf.connid = htons(conn->conn_id_recv);
-		p1->pf.windowsize = htonl(conn->last_rcv_win);
-		p1->pf.seq_nr = htons(conn->seq_nr);
-		p1->ext_next = 0;
-		p1->ext_len = 8;
-		memset(p1->extensions, 0, 8);
+		p[PF1_TYPE] = ST_SYN << 4 | 1;
+		p[PF1_EXT] = 2;
+		set16(p + PF1_CONNID, conn->conn_id_recv);
+		set32(p + PF1_WND_SIZE, conn->last_rcv_win);
+		set16(p + PF1_SEQ_NR, conn->seq_nr);
+		p[PF1_EXT_NEXT] = 0;
+		p[PF1_EXT_LEN] = 8;
+		memset(p + PF1_EXT_DATA, 0, 8);
 	}
 	pkt->transmissions = 0;
 	pkt->length = header_ext_size;
@@ -2462,41 +2417,35 @@ void UTP_Connect(UTPSocket *conn)
 
 bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 					   SendToProc *send_to_proc, void *send_to_userdata,
-					   const uint8_t *buffer, size_t len, const struct sockaddr *to, socklen_t tolen)
+					   const uint8_t *pkt, size_t len, const struct sockaddr *to, socklen_t tolen)
 {
-	if (len < sizeof(PacketFormat) && len < sizeof(PacketFormatV1)) {
+	if (len < PF0_SIZE && len < PF1_SIZE) {
 		LOG_UTPV("recv %s len:%u too small", addrfmt(to, addrbuf), (uint)len);
 		return false;
 	}
 
-	const PacketFormat* p = (PacketFormat*)buffer;
-	const PacketFormatV1* p1 = (PacketFormatV1*)buffer;
+	const uint8_t version = UTP_GetVersion(pkt);
+	const uint32_t id = version == 0 ? get32(pkt + PF0_CONNID) : get16(pkt + PF1_CONNID);
 
-	const uint8_t version = UTP_IsV1(p1);
-	const uint32_t id = (version == 0) ? ntohl(p->connid) : ntohs(p1->connid);
-
-	if (version == 0 && len < sizeof(PacketFormat)) {
+	if (version == 0 && len < PF0_SIZE) {
 		LOG_UTPV("recv %s len:%u version:%u too small", addrfmt(to, addrbuf), (uint)len, version);
 		return false;
 	}
 
-	if (version == 1 && len < sizeof(PacketFormatV1)) {
+	if (version == 1 && len < PF1_SIZE) {
 		LOG_UTPV("recv %s len:%u version:%u too small", addrfmt(to, addrbuf), (uint)len, version);
 		return false;
 	}
 
 	LOG_UTPV("recv %s len:%u id:%u", addrfmt(to, addrbuf), (uint)len, id);
 
-	const PacketFormat *pf = (PacketFormat*)p;
-	const PacketFormatV1 *pf1 = (PacketFormatV1*)p;
-
 	if (version == 0) {
-		LOG_UTPV("recv id:%u seq_nr:%" PRIu16 " ack_nr:%" PRIu16, id, ntohs(pf->seq_nr), ntohs(pf->ack_nr));
+		LOG_UTPV("recv id:%u seq_nr:%" PRIu16 " ack_nr:%" PRIu16, id, get16(pkt + PF0_SEQ_NR), get16(pkt + PF0_ACK_NR));
 	} else {
-		LOG_UTPV("recv id:%u seq_nr:%" PRIu16 " ack_nr:%" PRIu16, id, ntohs(pf1->seq_nr), ntohs(pf1->ack_nr));
+		LOG_UTPV("recv id:%u seq_nr:%" PRIu16 " ack_nr:%" PRIu16, id, get16(pkt + PF1_SEQ_NR), get16(pkt + PF1_ACK_NR));
 	}
 
-	const uint8_t flags = version == 0 ? pf->flags : packetformatv1_type(pf1);
+	const uint8_t flags = version == 0 ? pkt[PF0_FLAGS] : pkt[PF1_TYPE] >> 4;
 
 	for (size_t i = 0; i < g_utp_sockets_count; i++) {
 		UTPSocket *conn = g_utp_sockets[i];
@@ -2523,7 +2472,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 			return true;
 		} else if (flags != ST_SYN && conn->conn_id_recv == id) {
 			LOG_UTPV("0x%08x: recv processing", conn);
-			const size_t read = UTP_ProcessIncoming(conn, buffer, len, false);
+			const size_t read = UTP_ProcessIncoming(conn, pkt, len, false);
 			if (conn->userdata) {
 				conn->func.on_overhead(conn->userdata, false,
 					(len - read) + utp_get_udp_overhead(conn),
@@ -2538,7 +2487,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 		return true;
 	}
 
-	const uint32_t seq_nr = version == 0 ? ntohs(pf->seq_nr) : ntohs(pf1->seq_nr);
+	const uint32_t seq_nr = version == 0 ? get16(pkt + PF0_SEQ_NR) : get16(pkt + PF1_SEQ_NR);
 	if (flags != ST_SYN) {
 		for (size_t i = 0; i < g_rst_info_count; i++) {
 			if (g_rst_info[i].connid != id)
@@ -2590,7 +2539,7 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 		UTP_SetSockopt(conn, SO_UTPVERSION, version);
 		conn->state = CS_CONNECTED;
 
-		const size_t read = UTP_ProcessIncoming(conn, buffer, len, true);
+		const size_t read = UTP_ProcessIncoming(conn, pkt, len, true);
 
 		LOG_UTPV("0x%08x: recv send connect ACK", conn);
 		utp_send_ack(conn, true);
@@ -2611,18 +2560,15 @@ bool UTP_IsIncomingUTP(UTPGotIncomingConnection *incoming_proc,
 	return true;
 }
 
-bool UTP_HandleICMP(const uint8_t* buffer, size_t len, const struct sockaddr *to, socklen_t tolen)
+bool UTP_HandleICMP(const uint8_t *pkt, size_t len, const struct sockaddr *to, socklen_t tolen)
 {
 	// Want the whole packet so we have connection ID
-	if (len < sizeof(PacketFormat)) {
+	if (len < PF0_SIZE) {
 		return false;
 	}
 
-	const PacketFormat* p = (PacketFormat*)buffer;
-	const PacketFormatV1* p1 = (PacketFormatV1*)buffer;
-
-	const uint8_t version = UTP_IsV1(p1);
-	const uint32_t id = (version == 0) ? ntohl(p->connid) : ntohs(p1->connid);
+	const uint8_t version = UTP_GetVersion(pkt);
+	const uint32_t id = version == 0 ? get32(pkt + PF0_CONNID) : get16(pkt + PF1_CONNID);
 
 	for (size_t i = 0; i < g_utp_sockets_count; ++i) {
 		UTPSocket *conn = g_utp_sockets[i];

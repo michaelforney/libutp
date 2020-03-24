@@ -18,14 +18,6 @@
 #endif
 #endif
 
-#ifdef __GNUC__
-// Used for gcc tool chains accepting but not supporting pragma pack
-// See http://gcc.gnu.org/onlinedocs/gcc/Type-Attributes.html
-#define PACKED_ATTRIBUTE __attribute__((__packed__))
-#else
-#define PACKED_ATTRIBUTE
-#endif
-
 // Utility templates
 #undef min
 #undef max
@@ -51,8 +43,5 @@ static inline intmax_t smax(intmax_t a, intmax_t b)
 {
 	return a > b ? a : b;
 }
-
-typedef uint32_t uint32_big;
-typedef uint16_t uint16_big;
 
 #endif //__TEMPLATES_H__
