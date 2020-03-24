@@ -1,4 +1,6 @@
 #include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 #ifdef WIN32
@@ -77,7 +79,6 @@ static uint64_t GetMicroseconds()
 
 #include <time.h>
 #include <sys/time.h>		// Linux needs both time.h and sys/time.h
-#include <stdlib.h>
 
 #include <unistd.h>
 #include <sys/socket.h>

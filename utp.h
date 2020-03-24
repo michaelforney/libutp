@@ -1,6 +1,10 @@
 #ifndef __UTP_H__
 #define __UTP_H__
 
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+
 #ifdef WIN32
 #ifndef _CRT_SECURE_NO_DEPRECATE
 #define _CRT_SECURE_NO_DEPRECATE
@@ -15,8 +19,6 @@
 #pragma comment(lib,"ws2_32.lib")
 #endif
 #else
-#include <stdbool.h>
-#include <stdlib.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
