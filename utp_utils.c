@@ -46,7 +46,7 @@ void Time_Initialize()
 	startGetTickCount = UTGetTickCount64();
 }
 
-int64_t abs64(int64 x) { return x < 0 ? -x : x; }
+int64_t abs64(int64_t x) { return x < 0 ? -x : x; }
 
 static uint64_t GetMicroseconds()
 {
@@ -64,7 +64,7 @@ static uint64_t GetMicroseconds()
 
 	// unfortunately, QueryPerformanceCounter is not guaranteed
 	// to be monotonic. Make it so.
-	int64_t ret = (int64)(((int64)counter - (int64)startPerformanceCounter) / counterPerMicrosecond);
+	int64_t ret = ((int64_t)counter - (int64_t)startPerformanceCounter) / counterPerMicrosecond;
 	// if the QPC clock leaps more than one second off GetTickCount64()
 	// something is seriously fishy. Adjust QPC to stay monotonic
 	int64_t tick_diff = tick - startGetTickCount;
