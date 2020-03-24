@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 2.8)
-project(utp C)
+project(utp C CXX)
+
+enable_testing()
+add_subdirectory(tests)
 
 add_library(${PROJECT_NAME} STATIC
     utp.c
