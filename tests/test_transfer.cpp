@@ -26,7 +26,7 @@
 #define utassert assert
 #define utassert_failmsg(expr,failstmt) if (!(expr)) { failstmt; utassert(#expr); }
 
-extern uint32_t g_current_ms;
+extern "C" uint32_t g_current_ms;
 
 struct utp_socket {
 
