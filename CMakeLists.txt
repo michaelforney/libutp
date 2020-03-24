@@ -1,10 +1,6 @@
 cmake_minimum_required(VERSION 2.8)
 project(utp C)
 
-if(NOT WIN32)
-    add_definitions(-DPOSIX)
-endif()
-
 include_directories(.)
 
 add_library(${PROJECT_NAME} STATIC
