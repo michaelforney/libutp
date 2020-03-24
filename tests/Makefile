@@ -11,5 +11,5 @@ endif
 utp:=../libutp.a
 cflags:=-fno-exceptions -fno-rtti
 
-tests: test_transfer.cpp
+tests: test_transfer.cpp $(utp)
 	g++ -Wall -o tests -g test_transfer.cpp $(utp) -DPOSIX -I . -I .. -I ../utp_config_lib $(libs) $(cflags)
