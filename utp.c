@@ -654,7 +654,7 @@ struct UTPSocket {
 
 #ifdef _DEBUG
 	// Public stats, returned by UTP_GetStats().  See utp.h
-	UTPStats _stats;
+	struct UTPStats _stats;
 #endif // _DEBUG
 
 };
@@ -775,8 +775,8 @@ static void utp_send_data(UTPSocket *conn, uint8_t *pkt, size_t length, enum ban
 	conn->last_sent_packet = g_current_ms;
 
 #ifdef _DEBUG
-	_stats._nbytes_xmit += length;
-	++_stats._nxmit;
+	conn->_stats._nbytes_xmit += length;
+	++conn->_stats._nxmit;
 #endif
 	if (conn->userdata) {
 		size_t n;
@@ -1140,17 +1140,17 @@ static void utp_update_send_quota(UTPSocket *conn)
 #ifdef _DEBUG
 static void utp_check_invariant(UTPSocket *conn)
 {
-	if (reorder_count > 0) {
-		assert(conn->inbuf.get(conn->ack_nr + 1) == NULL);
+	if (conn->reorder_count > 0) {
+		assert(circbuf_get(&conn->inbuf, conn->ack_nr + 1) == NULL);
 	}
 
 	size_t outstanding_bytes = 0;
 	for (int i = 0; i < conn->cur_window_packets; ++i) {
-		OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(seq_nr - i - 1);
+		OutgoingPacket *pkt = circbuf_get(&conn->outbuf, conn->seq_nr - i - 1);
 		if (pkt == 0 || pkt->transmissions == 0 || pkt->need_resend) continue;
 		outstanding_bytes += pkt->payload;
 	}
-	assert(outstanding_bytes == cur_window);
+	assert(outstanding_bytes == conn->cur_window);
 }
 #endif
 
@@ -1204,7 +1204,7 @@ static void utp_check_timeouts(UTPSocket *conn)
 			conn->rto_timeout > 0) {
 
 			/*
-			OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(seq_nr - cur_window_packets);
+			OutgoingPacket *pkt = circbuf_get(&conn->outbuf, seq_nr - cur_window_packets);
 			
 			// If there were a lot of retransmissions, force recomputation of round trip time
 			if (pkt->transmissions >= 4)
@@ -1536,7 +1536,7 @@ static void utp_selective_ack(UTPSocket *conn, unsigned base, const uint8_t *mas
 		// On Loss
 		back_off = true;
 #ifdef _DEBUG
-		++_stats._rexmit;
+		++conn->_stats._rexmit;
 #endif
 		utp_send_packet(conn, pkt);
 		conn->fast_resend_seq_nr = v + 1;
@@ -1949,7 +1949,7 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const uint8_t *pkt, size_t len, bool
 			// into the outgoing buffer, but does exceed what we have sent
 			if (ack_status == 2) {
 #ifdef _DEBUG
-				OutgoingPacket* pkt = (OutgoingPacket*)conn->outbuf.get(conn->seq_nr - conn->cur_window_packets);
+				OutgoingPacket* pkt = circbuf_get(&conn->outbuf, conn->seq_nr - conn->cur_window_packets);
 				assert(pkt->transmissions == 0);
 #endif
 				break;
@@ -2736,7 +2736,7 @@ void UTP_GetDelays(UTPSocket *conn, int32_t *ours, int32_t *theirs, uint32_t *ag
 }
 
 #ifdef _DEBUG
-void UTP_GetStats(UTPSocket *conn, UTPStats *stats)
+void UTP_GetStats(UTPSocket *conn, struct UTPStats *stats)
 {
 	assert(conn);
 
