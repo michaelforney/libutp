@@ -63,8 +63,6 @@
 
 #include "udp.h"
 
-#include "templates.h"
-
 // These are for casting the options for getsockopt
 // and setsockopt which if incorrect can cause these
 // calls to fail.
@@ -98,7 +96,7 @@ size_t g_sockets_count;
 static void g_sockets_append(socket_state *s)
 {
 	if (g_sockets_count >= g_sockets_alloc) {
-		g_sockets_alloc = max((size_t)16, g_sockets_alloc * 2);
+		g_sockets_alloc = g_sockets_alloc ? g_sockets_alloc * 2 : 16;
 		g_sockets = (socket_state *)realloc(g_sockets, g_sockets_alloc * sizeof(g_sockets[0]));
 	}
 	g_sockets[g_sockets_count++] = *s;

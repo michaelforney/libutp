@@ -1,5 +1,4 @@
 #include "utp.h"
-#include "templates.h"
 
 #include <stdio.h>
 #include <assert.h>
@@ -230,6 +229,28 @@ static inline uint32_t get32(const void *src)
 	uint32_t val;
 	memcpy(&val, src, 4);
 	return ntohl(val);
+}
+
+static inline uintmax_t min(uintmax_t a, uintmax_t b)
+{
+	return a < b ? a : b;
+}
+
+static inline uintmax_t max(uintmax_t a, uintmax_t b)
+{
+	return a > b ? a : b;
+}
+
+/* XXX: Is this really needed? Can conn->send_quota ever be negative? */
+static inline intmax_t smin(intmax_t a, intmax_t b)
+{
+	return a < b ? a : b;
+}
+
+/* XXX: Is this really needed? Can rtt ever be negative? */
+static inline intmax_t smax(intmax_t a, intmax_t b)
+{
+	return a > b ? a : b;
 }
 
 static const char *const flagnames[] = {
