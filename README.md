@@ -1,5 +1,7 @@
 # libutp - The uTorrent Transport Protocol library.
 
+[![build](https://github.com/oasislinux/libutp/workflows/build/badge.svg)](https://github.com/oasislinux/libutp/actions)
+
 Copyright (c) 2010 BitTorrent, Inc.
 
 uTP is a TCP-like implementation of [LEDBAT][ledbat] documented as a BitTorrent

@@ -1,0 +1,17 @@
+name: build
+
+on: [push]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macOS-latest, windows-latest]
+        config: [Debug, Release]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v2
+    - name: build
+      run: cmake -D CMAKE_BUILD_TYPE=${{ matrix.config }} . && cmake --build . --config ${{ matrix.config }} -v
+    - name: test
+      run: ctest -C ${{ matrix.config }} --output-on-failure
