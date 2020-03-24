@@ -231,6 +231,9 @@ static inline uint32_t get32(const void *src)
 	return ntohl(val);
 }
 
+#undef min
+#undef max
+
 static inline uintmax_t min(uintmax_t a, uintmax_t b)
 {
 	return a < b ? a : b;
