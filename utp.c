@@ -791,12 +791,12 @@ static void utp_send_data(UTPSocket *conn, PacketFormat* b, size_t length, enum 
 		conn->func.on_overhead(conn->userdata, true, n, type);
 	}
 #if g_log_utp_verbose
-	int flags = version == 0 ? b->flags : b1->type();
-	uint16_t seq_nr = version == 0 ? b->seq_nr : b1->seq_nr;
-	uint16_t ack_nr = version == 0 ? b->ack_nr : b1->ack_nr;
+	int flags = conn->version == 0 ? b->flags : packetformatv1_type(b1);
+	uint16_t seq_nr = conn->version == 0 ? b->seq_nr : b1->seq_nr;
+	uint16_t ack_nr = conn->version == 0 ? b->ack_nr : b1->ack_nr;
 	LOG_UTPV("0x%08x: send %s len:%u id:%u timestamp:" I64u " reply_micro:%u flags:%s seq_nr:%u ack_nr:%u",
-			 this, addrfmt(&addr, addrbuf), (uint)length, conn_id_send, time, reply_micro, flagnames[flags],
-			 seq_nr, ack_nr);
+	         conn, addrfmt((const struct sockaddr *)&conn->addr, addrbuf), (uint)length, conn->conn_id_send,
+	         time, conn->reply_micro, flagnames[flags], seq_nr, ack_nr);
 #endif
 	send_to_addr(conn->send_to_proc, conn->send_to_userdata, (const uint8_t*)b, length, (const struct sockaddr *)&conn->addr, conn->addrlen);
 }
