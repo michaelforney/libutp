@@ -1738,33 +1738,31 @@ size_t UTP_ProcessIncoming(UTPSocket *conn, const uint8_t *pkt, size_t len, bool
 		return 0;
 	}
 	// Skip the extension headers
-	if (pk_ext != 0) {
-		do {
-			// Verify that the packet is valid.
-			data += 2;
+	while (pk_ext != 0) {
+		// Verify that the packet is valid.
+		data += 2;
 
-			if ((int)(packet_end - data) < 0 || (int)(packet_end - data) < data[-1]) {
-				LOG_UTPV("0x%08x: Invalid len of extensions", conn);
+		if ((int)(packet_end - data) < 0 || (int)(packet_end - data) < data[-1]) {
+			LOG_UTPV("0x%08x: Invalid len of extensions", conn);
+			return 0;
+		}
+
+		switch(pk_ext) {
+		case 1: // Selective Acknowledgment
+			selack_ptr = data;
+			break;
+		case 2: // extension bits
+			if (data[-1] != 8) {
+				LOG_UTPV("0x%08x: Invalid len of extension bits header", conn);
 				return 0;
 			}
-
-			switch(pk_ext) {
-			case 1: // Selective Acknowledgment
-				selack_ptr = data;
-				break;
-			case 2: // extension bits
-				if (data[-1] != 8) {
-					LOG_UTPV("0x%08x: Invalid len of extension bits header", conn);
-					return 0;
-				}
-				memcpy(conn->extensions, data, 8);
-				LOG_UTPV("0x%08x: got extension bits:%02x%02x%02x%02x%02x%02x%02x%02x", conn,
-					conn->extensions[0], conn->extensions[1], conn->extensions[2], conn->extensions[3],
-					conn->extensions[4], conn->extensions[5], conn->extensions[6], conn->extensions[7]);
-			}
-			pk_ext = data[-2];
-			data += data[-1];
-		} while (pk_ext);
+			memcpy(conn->extensions, data, 8);
+			LOG_UTPV("0x%08x: got extension bits:%02x%02x%02x%02x%02x%02x%02x%02x", conn,
+				conn->extensions[0], conn->extensions[1], conn->extensions[2], conn->extensions[3],
+				conn->extensions[4], conn->extensions[5], conn->extensions[6], conn->extensions[7]);
+		}
+		pk_ext = data[-2];
+		data += data[-1];
 	}
 
 	if (conn->state == CS_SYN_SENT) {
