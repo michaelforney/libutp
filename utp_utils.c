@@ -114,12 +114,11 @@ static uint64_t GetMicroseconds()
 static uint64_t GetMicroseconds()
 {
 	static int have_posix_clocks = -1;
-	int rc;
 
 #if defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0 && defined(CLOCK_MONOTONIC)
 	if (have_posix_clocks < 0) {
 		struct timespec ts;
-		rc = clock_gettime(CLOCK_MONOTONIC, &ts);
+		int rc = clock_gettime(CLOCK_MONOTONIC, &ts);
 		if (rc < 0) {
 			have_posix_clocks = 0;
 		} else {
@@ -129,13 +128,13 @@ static uint64_t GetMicroseconds()
 
 	if (have_posix_clocks) {
 		struct timespec ts;
-		rc = clock_gettime(CLOCK_MONOTONIC, &ts);
+		clock_gettime(CLOCK_MONOTONIC, &ts);
 		return (uint64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
 	}
 #endif
 	{
 		struct timeval tv;
-		rc = gettimeofday(&tv, NULL);
+		gettimeofday(&tv, NULL);
 		return (uint64_t)tv.tv_sec * 1000000 + tv.tv_usec;
 	}
 }
